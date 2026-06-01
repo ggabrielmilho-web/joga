@@ -1,0 +1,90 @@
+{% extends "_shell.html" %}
+{% block title %}Visão Geral{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Visão Geral Comercial</h1>
+  <p class="desc">Indicadores dos últimos 12 meses · {{ EMPRESA_EXEMPLO }}</p>
+</div>
+
+<div class="grid cols-4" id="kpis">
+  <div class="card kpi-card"><div class="label">💰 Venda Líquida 12m</div><div class="valor" id="k-venda">—</div><div id="k-venda-yoy" class="yoy"></div></div>
+  <div class="card kpi-card"><div class="label">📈 Lucro Total 12m</div><div class="valor" id="k-lucro">—</div><div id="k-lucro-yoy" class="yoy"></div></div>
+  <div class="card kpi-card"><div class="label">🎯 Margem média</div><div class="valor" id="k-margem">—</div></div>
+  <div class="card kpi-card"><div class="label">🛒 Ticket Médio</div><div class="valor sm" id="k-ticket">—</div></div>
+</div>
+
+<div class="grid cols-4" style="margin-top:16px;">
+  <div class="card kpi-card"><div class="label">👥 Clientes Positivados</div><div class="valor sm" id="k-pos">—</div></div>
+  <div class="card kpi-card"><div class="label">🆕 Clientes Novos</div><div class="valor sm" id="k-novos">—</div></div>
+  <div class="card kpi-card"><div class="label">✅ Clientes Ativos</div><div class="valor sm" id="k-ativos">—</div></div>
+  <div class="card kpi-card"><div class="label">📇 Total Carteira</div><div class="valor sm" id="k-total">—</div></div>
+</div>
+
+<div class="grid cols-2" style="margin-top:16px;">
+  <div class="card chart-card"><h3>Evolução mensal <span class="sub">venda × lucro (12m)</span></h3><div class="chart-wrap"><canvas id="serie"></canvas></div></div>
+  <div class="card chart-card"><h3>Distribuição da carteira <span class="sub">por segmento RFM</span></h3><div class="chart-wrap"><canvas id="segs"></canvas></div></div>
+</div>
+
+<div class="grid cols-2" style="margin-top:16px;">
+  <div class="card table-card">
+    <h3>Top 10 clientes <span class="sub">por lucro 12m</span></h3>
+    <table class="data"><thead><tr><th>Cliente</th><th>UF</th><th>Vendedor</th><th class="num">Lucro 12m</th></tr></thead>
+    <tbody id="top-cli"><tr><td colspan="4" class="loading"><span class="spin"></span></td></tr></tbody></table>
+  </div>
+  <div class="card chart-card"><h3>Sazonalidade <span class="sub">venda por mês (2 anos)</span></h3><div class="chart-wrap"><canvas id="sazon"></canvas></div></div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function load(){
+  const k = await api('/comercial/api/dashboard/kpis');
+  document.getElementById('k-venda').textContent  = BRLc(k.primarios.venda_liquida);
+  document.getElementById('k-lucro').textContent  = BRLc(k.primarios.lucro_total);
+  document.getElementById('k-margem').textContent = PCT(k.primarios.margem);
+  document.getElementById('k-ticket').textContent = BRL(k.primarios.ticket_medio);
+  document.getElementById('k-pos').textContent    = NUM(k.secundarios.clientes_positivados);
+  document.getElementById('k-novos').textContent  = NUM(k.secundarios.clientes_novos);
+  document.getElementById('k-ativos').textContent = NUM(k.secundarios.clientes_ativos);
+  document.getElementById('k-total').textContent  = NUM(k.secundarios.total_clientes);
+  yoyBadge('k-venda-yoy', k.yoy.receita_liquida);
+  yoyBadge('k-lucro-yoy', k.yoy.lucro_bruto);
+
+  const s = await api('/comercial/api/dashboard/serie?meses=12');
+  new Chart(serie, {type:'line', data:{
+    labels: s.rows.map(r=>r.AnoMes.slice(5)+'/'+r.AnoMes.slice(2,4)),
+    datasets:[
+      {label:'Venda', data:s.rows.map(r=>r.VendaLiquida), borderColor:CSS('--accent'), backgroundColor:'rgba(240,168,48,.12)', fill:true, tension:.35},
+      {label:'Lucro', data:s.rows.map(r=>r.LucroTotal), borderColor:CSS('--accent2'), tension:.35}
+    ]}, options:{maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
+      scales:{y:{ticks:{callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}}});
+
+  const r = await api('/comercial/api/carteira/rfm');
+  const segs = r.segmentos;
+  new Chart(document.getElementById('segs'), {type:'doughnut', data:{
+    labels: Object.keys(segs).map(s=>NOME_SEG[s]||s),
+    datasets:[{data:Object.values(segs), backgroundColor:Object.keys(segs).map(s=>COR_SEG[s]), borderWidth:0}]
+  }, options:{maintainAspectRatio:false, plugins:{legend:{position:'right', labels:{boxWidth:12}}}, cutout:'58%'}});
+
+  const t = await api('/comercial/api/dashboard/top-clientes?metrica=lucro&limit=10');
+  document.getElementById('top-cli').innerHTML = t.rows.map(c=>
+    `<tr><td>${c.CLIENTE}</td><td>${c.UF||''}</td><td class="muted">${c.VENDEDOR||''}</td><td class="num">${BRLc(c.Lucro12m)}</td></tr>`).join('');
+
+  const sz = await api('/comercial/api/dashboard/sazonalidade');
+  const anos = [...new Set(sz.rows.map(r=>r.Ano))].sort();
+  const cores=[CSS('--accent2'),CSS('--accent')];
+  new Chart(sazon, {type:'line', data:{
+    labels: MESES,
+    datasets: anos.map((a,i)=>({label:a, tension:.35, borderColor:cores[i%2],
+      data: MESES.map((_,m)=>{const f=sz.rows.find(r=>r.Ano===a&&r.MES===m+1); return f?f.VendaLiquida:null;})}))
+  }, options:{maintainAspectRatio:false, plugins:{legend:{position:'bottom'}},
+    scales:{y:{ticks:{callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}}});
+}
+function yoyBadge(id, v){
+  const el=document.getElementById(id); if(v==null){el.textContent='';return;}
+  const up=v>=0; el.className='yoy '+(up?'up':'down');
+  el.textContent=(up?'▲ ':'▼ ')+PCT(Math.abs(v))+' vs ano anterior';
+}
+load().catch(e=>console.error(e));
+</script>
+{% endblock %}

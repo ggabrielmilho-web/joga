@@ -1,0 +1,33 @@
+name: build-and-push
+
+# Builda a imagem Docker e publica no GitHub Container Registry (GHCR)
+# a cada push na main. O Portainer (Swarm) puxa ghcr.io/ggabrielmilho-web/joga:latest.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/ggabrielmilho-web/joga:latest

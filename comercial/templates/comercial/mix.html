@@ -1,0 +1,53 @@
+{% extends "_shell.html" %}
+{% block title %}Mix Abandonado{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Mix Abandonado</h1>
+  <p class="desc">Pares cliente × departamento parados há mais de N dias — receita em risco por recompra.</p>
+</div>
+<div class="card">
+  <div class="filtros">
+    <select id="f-dias"><option value="30">30 dias</option><option value="60" selected>60 dias</option><option value="90">90 dias</option><option value="180">180 dias</option></select>
+    <select id="f-dep"><option value="">Todos os departamentos</option></select>
+    <input id="f-busca" placeholder="🔍 cliente…">
+  </div>
+  <div class="grid cols-3" style="margin-bottom:16px;">
+    <div class="card kpi-card"><div class="label">Pares parados</div><div class="valor sm" id="k-pares">—</div></div>
+    <div class="card kpi-card"><div class="label">Receita 12m em risco</div><div class="valor sm" id="k-receita">—</div></div>
+    <div class="card kpi-card"><div class="label">Maior perda individual</div><div class="valor sm" id="k-top">—</div></div>
+  </div>
+  <table class="data"><thead><tr><th>Cliente</th><th>Cidade/UF</th><th>Vendedor</th><th>Departamento</th>
+    <th class="num">Dias parado</th><th class="num">Venda Cat 12m</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="6" class="loading"><span class="spin"></span></td></tr></tbody></table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let DEPS={};
+async function deps(){
+  const d = await api('/comercial/api/_internal/supervisores-map'); // só p/ aquecer; deptos vêm de categorias
+  const c = await api('/comercial/api/categorias');
+  const sel=document.getElementById('f-dep');
+  c.categorias.forEach(x=>sel.innerHTML+=`<option value="${x.codepto}">${x.nome}</option>`);
+}
+async function load(){
+  const dias=document.getElementById('f-dias').value, dep=document.getElementById('f-dep').value;
+  let url='/comercial/api/mix/abandonado?dias='+dias+(dep?'&codepto='+dep:'');
+  const d = await api(url);
+  let rows=d.rows;
+  const b=document.getElementById('f-busca').value.trim().toLowerCase();
+  if(b)rows=rows.filter(r=>r.cliente.toLowerCase().includes(b));
+  const receita=rows.reduce((s,r)=>s+r.venda_cat_12m,0);
+  document.getElementById('k-pares').textContent=NUM(rows.length);
+  document.getElementById('k-receita').textContent=BRLc(receita);
+  document.getElementById('k-top').textContent=rows.length?BRLc(Math.max(...rows.map(r=>r.venda_cat_12m))):'—';
+  document.getElementById('rows').innerHTML = rows.slice(0,100).map(r=>
+    `<tr><td>${r.cliente}</td><td>${r.cidade}/${r.uf}</td><td class="muted">${r.vendedor||''}</td>
+     <td>${r.depto_nome}</td><td class="num"><span class="tag ${r.dias_sem_comprar>90?'urgente':'atencao'}">${r.dias_sem_comprar}d</span></td>
+     <td class="num">${BRLc(r.venda_cat_12m)}</td></tr>`).join('') || '<tr><td colspan="6" class="loading">Nada parado neste filtro.</td></tr>';
+}
+['f-dias','f-dep'].forEach(id=>document.getElementById(id).onchange=load);
+document.getElementById('f-busca').oninput=load;
+deps().then(load).catch(e=>console.error(e));
+</script>
+{% endblock %}

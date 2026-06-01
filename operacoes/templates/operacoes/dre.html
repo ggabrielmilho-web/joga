@@ -1,0 +1,142 @@
+{% extends "_shell.html" %}
+{% block title %}DRE{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>DRE — Demonstrativo de Resultados</h1>
+  <p class="desc">Estrutura contábil completa · acumulado dos últimos 12 meses · {{ EMPRESA_EXEMPLO }}</p>
+</div>
+{% set sub='dre' %}{% include 'operacoes/_optabs.html' %}
+
+<div class="grid cols-3">
+  <div class="card kpi-card"><div class="label">💵 Receita Bruta</div><div class="valor sm" id="k-rb">—</div></div>
+  <div class="card kpi-card"><div class="label">🧾 Receita Líquida</div><div class="valor sm" id="k-rl">—</div></div>
+  <div class="card kpi-card"><div class="label">⚙️ EBITDA</div><div class="valor sm" id="k-eb">—</div><div class="yoy muted" id="k-eb-m"></div></div>
+</div>
+<div class="grid cols-3" style="margin-top:16px;">
+  <div class="card kpi-card"><div class="label">💰 Lucro Líquido</div><div class="valor sm" id="k-ll">—</div><div class="yoy muted" id="k-ll-m"></div></div>
+  <div class="card kpi-card"><div class="label">🏁 Resultado Final</div><div class="valor sm" id="k-rf">—</div><div class="yoy muted" id="k-rf-m"></div></div>
+  <div class="card kpi-card"><div class="label">🎯 Margem Líquida</div><div class="valor" id="k-mg">—</div></div>
+</div>
+
+<div class="grid cols-2" style="margin-top:16px;">
+  <div class="card chart-card"><h3>Cascata do resultado <span class="sub">como a receita vira resultado</span></h3><div class="chart-wrap"><canvas id="wf"></canvas></div></div>
+  <div class="card chart-card"><h3>Evolução mensal <span class="sub">receita × EBITDA × resultado</span></h3><div class="chart-wrap"><canvas id="serie"></canvas></div></div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <h3>Demonstrativo em cascata <span class="sub">clique numa linha (−) para abrir o detalhamento</span></h3>
+  <table class="data" style="margin-top:8px;">
+    <thead><tr><th>Conta</th><th class="num">Valor 12m</th><th class="num">% Receita</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="3" class="loading"><span class="spin"></span></td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const $ = id => document.getElementById(id);
+let DRE;
+
+async function load(){
+  DRE = await api('/operacoes/api/dre?meses=12');
+  $('k-rb').textContent = BRLc(DRE.receita_bruta);
+  $('k-rl').textContent = BRLc(DRE.receita_liquida);
+  $('k-eb').textContent = BRLc(DRE.ebitda); $('k-eb-m').textContent = 'margem '+PCT(DRE.ebitda_margem);
+  $('k-ll').textContent = BRLc(DRE.lucro_liquido); $('k-ll-m').textContent = 'margem '+PCT(DRE.margem_liquida);
+  $('k-rf').textContent = BRLc(DRE.resultado_final); $('k-rf-m').textContent = 'margem '+PCT(DRE.margem_final);
+  $('k-mg').textContent = PCT(DRE.margem_liquida);
+  $('k-rf').style.color = DRE.resultado_final>=0?'var(--green)':'var(--red)';
+
+  waterfall(); serieChart(); tabela();
+}
+
+function waterfall(){
+  // base flutuante: receita sobe, deduções/custos/despesas descem, subtotais como marcos
+  const passos = [
+    ['Receita', DRE.receita_bruta, 'tot'],
+    ['Deduções', -DRE['Deduções'], 'neg'],
+    ['Custo Op.', -DRE['Custo Operacional'], 'neg'],
+    ['Desp. Adm.', -DRE['Despesas Administrativas'], 'neg'],
+    ['EBITDA', DRE.ebitda, 'sub'],
+    ['Financeiras', -DRE['Despesas Financeiras'], 'neg'],
+    ['Impostos', -DRE['Impostos'], 'neg'],
+    ['Investim.', -DRE['Investimentos'], 'neg'],
+    ['Retiradas', -DRE['Retiradas'], 'neg'],
+    ['Resultado', DRE.resultado_final, 'tot'],
+  ];
+  const bases=[], vals=[], cores=[];
+  let acc=0;
+  passos.forEach(([nome,v,tipo])=>{
+    if(tipo==='tot'||tipo==='sub'){
+      bases.push(0); vals.push(Math.max(0,v));
+      cores.push(tipo==='tot'?CSS('--accent'):CSS('--accent2'));
+      acc=v;
+    }else{
+      const ini=acc; acc+=v;
+      bases.push(Math.min(ini,acc)); vals.push(Math.abs(v));
+      cores.push(CSS('--red'));
+    }
+  });
+  new Chart(wf,{type:'bar',data:{labels:passos.map(p=>p[0]),
+    datasets:[{data:vals.map((v,i)=>[bases[i],bases[i]+v]),backgroundColor:cores,borderWidth:0}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:ctx=>{const r=ctx.raw;return BRLc(Math.abs(r[1]-r[0]));}}}},
+      scales:{y:{ticks:{callback:v=>'R$ '+(v/1000000).toFixed(1)+'M'}},x:{ticks:{maxRotation:45,minRotation:45}}}}});
+}
+
+function serieChart(){
+  new Chart(serie,{type:'bar',data:{labels:DRE.serie.map(s=>s.anomes.slice(5)+'/'+s.anomes.slice(2,4)),
+    datasets:[
+      {label:'Receita',data:DRE.serie.map(s=>s.receita),backgroundColor:CSS('--accent2')},
+      {type:'line',label:'EBITDA',data:DRE.serie.map(s=>s.ebitda),borderColor:CSS('--accent'),tension:.35},
+      {type:'line',label:'Resultado',data:DRE.serie.map(s=>s.resultado),borderColor:CSS('--green'),tension:.35}
+    ]},options:{maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},
+      scales:{y:{ticks:{callback:v=>'R$ '+(v/1000000).toFixed(1)+'M'}}}}});
+}
+
+function tabela(){
+  const html = DRE.estrutura.map(e=>{
+    const isSub = e.tipo==='subtotal';
+    const isGrp = e.tipo==='grupo';
+    const cor = (e.chave==='resultado_final') ? (e.valor>=0?'var(--green)':'var(--red)') : '';
+    const peso = isSub ? 'font-weight:700;' : '';
+    const bg = isSub ? 'background:var(--surface2);' : '';
+    const click = isGrp ? `onclick="toggle('${e.chave}')" class="clickable"` : '';
+    const seta = isGrp ? '<span class="exp" style="color:var(--text-mute);">▸</span> ' : '';
+    return `<tr ${click} style="${bg}${peso}">
+      <td style="${peso}">${seta}${e.linha}</td>
+      <td class="num" style="color:${cor}">${e.valor<0?'-':''}${BRLc(Math.abs(e.valor))}</td>
+      <td class="num muted">${e.pct.toFixed(1)}%</td></tr>
+      ${isGrp?`<tr class="drill" data-g="${e.chave}" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>`:''}`;
+  }).join('');
+  $('rows').innerHTML = html;
+}
+
+window.toggle = function(grupo){
+  const tr = document.querySelector(`tr.drill[data-g="${grupo}"]`);
+  if(!tr) return;
+  const aberto = tr.style.display!=='none';
+  // fecha outros
+  document.querySelectorAll('tr.drill').forEach(t=>t.style.display='none');
+  document.querySelectorAll('.exp').forEach(s=>s.textContent='▸');
+  if(aberto) return;
+  const g = DRE.grupos_drill[grupo];
+  let inner = '<table class="data" style="margin:0;background:var(--bg2);">';
+  g.subgrupos.forEach(sub=>{
+    inner += `<tr style="background:rgba(255,255,255,.02);"><td style="padding-left:34px;font-weight:600;">${sub.subgrupo}</td>
+      <td class="num" style="font-weight:600;">${BRLc(sub.total)}</td><td class="num muted">${sub.pct.toFixed(1)}%</td></tr>`;
+    sub.eventos.forEach(ev=>{
+      inner += `<tr><td style="padding-left:52px;" class="muted">${ev.evento}</td>
+        <td class="num">${BRLc(ev.valor)}</td><td class="num muted">${ev.pct.toFixed(1)}%</td></tr>`;
+    });
+  });
+  inner += '</table>';
+  tr.querySelector('td').innerHTML = inner;
+  tr.style.display = 'table-row';
+  // vira a seta da linha do grupo (a linha anterior)
+  const head = tr.previousElementSibling;
+  const exp = head && head.querySelector('.exp'); if(exp) exp.textContent='▾';
+};
+
+load().catch(e=>console.error(e));
+</script>
+{% endblock %}

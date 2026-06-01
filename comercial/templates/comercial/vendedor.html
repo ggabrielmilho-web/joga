@@ -1,0 +1,61 @@
+{% extends "_shell.html" %}
+{% block title %}Cockpit{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1 id="nome">Cockpit do Vendedor</h1>
+  <p class="desc" id="sub">—</p>
+</div>
+
+<div class="grid cols-4" id="kpis">
+  <div class="card kpi-card"><div class="label">💰 Venda 12m</div><div class="valor sm" id="k-venda">—</div><div class="yoy" id="k-yoy"></div></div>
+  <div class="card kpi-card"><div class="label">📈 Lucro 12m</div><div class="valor sm" id="k-lucro">—</div></div>
+  <div class="card kpi-card"><div class="label">👥 Carteira</div><div class="valor sm" id="k-cart">—</div></div>
+  <div class="card kpi-card"><div class="label">🎯 Positivação</div><div class="valor sm" id="k-pos">—</div><div class="yoy muted" id="k-media"></div></div>
+</div>
+
+<div class="grid cols-2" style="margin-top:16px;">
+  <div class="card chart-card"><h3>Evolução mensal 12m</h3><div class="chart-wrap"><canvas id="serie"></canvas></div></div>
+  <div class="card chart-card"><h3>Carteira por segmento</h3><div class="chart-wrap"><canvas id="segs"></canvas></div></div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <h3>⚡ Alertas acionáveis</h3>
+  <div id="alertas" class="muted" style="margin-top:8px;">carregando…</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const COD = {{ codusur }};
+async function load(){
+  const d = await api('/comercial/api/vendedor/'+COD);
+  document.getElementById('nome').textContent = d.perfil.nome;
+  document.getElementById('sub').textContent = `#${d.perfil.codusur} · ${d.perfil.tipo} · ${d.perfil.cidade}/${d.perfil.estado} · ${d.perfil.time||''} · Rank #${d.kpis.rank||'—'}`;
+  document.getElementById('k-venda').textContent = BRLc(d.kpis.venda_liq);
+  document.getElementById('k-lucro').textContent = BRLc(d.kpis.lucro);
+  document.getElementById('k-cart').textContent = `${d.carteira.positivados}/${d.carteira.cadastrados}`;
+  document.getElementById('k-pos').textContent = PCT(d.kpis.taxa_positivacao);
+  document.getElementById('k-media').textContent = 'média equipe '+PCT(d.comparativo_equipe.media_equipe);
+  const y=d.kpis.yoy_receita; const el=document.getElementById('k-yoy');
+  el.className='yoy '+(y>=0?'up':'down'); el.textContent=(y>=0?'▲ ':'▼ ')+PCT(Math.abs(y));
+
+  const s = await api('/comercial/api/vendedor/'+COD+'/serie');
+  new Chart(serie,{type:'line',data:{labels:s.rows.map(r=>r.AnoMes.slice(5)+'/'+r.AnoMes.slice(2,4)),
+    datasets:[{label:'Venda',data:s.rows.map(r=>r.VendaLiquida),borderColor:CSS('--accent'),backgroundColor:'rgba(240,168,48,.12)',fill:true,tension:.35},
+      {label:'Lucro',data:s.rows.map(r=>r.LucroTotal),borderColor:CSS('--accent2'),tension:.35}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{ticks:{callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}}});
+
+  new Chart(segs,{type:'doughnut',data:{labels:Object.keys(d.segmentos).map(s=>NOME_SEG[s]),
+    datasets:[{data:Object.values(d.segmentos),backgroundColor:Object.keys(d.segmentos).map(s=>COR_SEG[s]),borderWidth:0}]},
+    options:{maintainAspectRatio:false,cutout:'58%',plugins:{legend:{position:'right',labels:{boxWidth:11}}}}});
+
+  const a = await api('/comercial/api/vendedor/'+COD+'/alertas');
+  const ar=a.alertas.find(x=>x.tipo==='at_risk'), ch=a.alertas.find(x=>x.tipo==='champions_top3');
+  let html = `<div style="display:flex;gap:13px;align-items:center;padding:10px 0;">
+     <span class="tag urgente">Em risco</span> <b>${ar.qtd}</b> clientes somam <b>${BRLc(ar.valor)}</b> de receita projetada em risco — priorize contato.</div>`;
+  if(ch.clientes.length) html += `<div style="padding:10px 0;"><span class="tag ok">Champions</span> Top 3 por lucro:
+     ${ch.clientes.map(c=>`<a onclick="location.href='/comercial/carteira'" style="cursor:pointer;color:var(--accent2)">${c.cliente}</a> (${BRLc(c.lucro_12m)})`).join(' · ')}</div>`;
+  document.getElementById('alertas').innerHTML = html;
+}
+load().catch(e=>{console.error(e);document.getElementById('sub').textContent='Erro ao carregar.';});
+</script>
+{% endblock %}

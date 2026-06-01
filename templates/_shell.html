@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ MARCA }}{% endblock %} · {{ MARCA }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a href="/" class="brand">
+      <div class="logo">J</div>
+      <div>
+        <div class="nome">{{ MARCA }}</div>
+        <div class="sub">Soluções Empresariais</div>
+      </div>
+    </a>
+
+    {% set role = user_role %}
+    <div class="nav-group-label">Comercial</div>
+    <a class="nav-link {% if active=='dashboard' %}active{% endif %}" href="/comercial"><span class="ic">▣</span> Visão Geral</a>
+    <a class="nav-link {% if active=='carteira' %}active{% endif %}" href="/comercial/carteira"><span class="ic">◎</span> Carteira RFM</a>
+    {% if role != 'vendedor' %}
+    <a class="nav-link {% if active=='vendedores' %}active{% endif %}" href="/comercial/vendedores"><span class="ic">⊞</span> Vendedores</a>
+    {% else %}
+    <a class="nav-link {% if active=='vendedores' %}active{% endif %}" href="/comercial/vendedor/{{ session['codusur'] }}"><span class="ic">◉</span> Meu Cockpit</a>
+    {% endif %}
+    <a class="nav-link {% if active=='categorias' %}active{% endif %}" href="/comercial/categorias"><span class="ic">▦</span> Categorias</a>
+    <a class="nav-link {% if active=='mix' %}active{% endif %}" href="/comercial/mix"><span class="ic">⚠</span> Mix Abandonado</a>
+    <a class="nav-link {% if active=='tendencias' %}active{% endif %}" href="/comercial/tendencias"><span class="ic">⤴</span> Tendências</a>
+
+    <div class="nav-group-label">Operações</div>
+    <a class="nav-link {% if active=='operacoes' %}active{% endif %}" href="/operacoes"><span class="ic">◧</span> Logística</a>
+
+    <div class="spacer"></div>
+    <div class="side-user">
+      <span class="role-badge">● {{ user_role_label }}</span>
+      <span class="nome">{{ user_nome }}</span>
+      <a class="btn-sair" href="/logout">↪ Sair</a>
+    </div>
+  </aside>
+
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script>
+// Helpers globais de formatação + fetch resiliente
+const BRL = v => (v==null?'—':'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}));
+const BRLc = v => (v==null?'—':'R$ '+Number(v).toLocaleString('pt-BR',{maximumFractionDigits:0}));
+const NUM = v => (v==null?'—':Number(v).toLocaleString('pt-BR'));
+const PCT = v => (v==null?'—':Number(v).toLocaleString('pt-BR',{maximumFractionDigits:1})+'%');
+const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const NOME_SEG = {champions:'Champions',loyal:'Fiéis',cant_lose:'Não Perder',at_risk:'Em Risco',new:'Novos',potential_loyalist:'Potenciais',lost:'Perdidos',hibernating:'Hibernando'};
+const COR_SEG = {champions:'#34d399',loyal:'#2dd4bf',cant_lose:'#a78bfa',at_risk:'#fb923c',new:'#60a5fa',potential_loyalist:'#f0a830',lost:'#f87171',hibernating:'#9b9da8'};
+const CSS = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+async function api(url){
+  const r = await fetch(url, {credentials:'same-origin'});
+  if(r.status===401){ location.href='/login'; return null; }
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
+}
+// tema padrão dos gráficos Chart.js
+if(window.Chart){
+  Chart.defaults.color = CSS('--text-dim');
+  Chart.defaults.borderColor = 'rgba(255,255,255,.06)';
+  Chart.defaults.font.family = "'Space Grotesk', sans-serif";
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

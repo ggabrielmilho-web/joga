@@ -1,0 +1,30 @@
+{% extends "_shell.html" %}
+{% block title %}Início{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Bem-vindo à plataforma {{ MARCA }}</h1>
+  <p class="desc">Soluções de inteligência de negócio para distribuição e logística.</p>
+  <span class="empresa-tag">Dados de demonstração de <b>{{ EMPRESA_EXEMPLO }}</b></span>
+</div>
+
+<div class="modules">
+  <a class="module-card" href="/comercial">
+    <div class="mc-ic">📊</div>
+    <h2>JOGA Comercial</h2>
+    <p>Inteligência comercial sobre a carteira: RFM, ranking de vendedores, cohort,
+       mix abandonado e tendências — com controle de acesso por perfil.</p>
+    <div class="feats">
+      <span>Carteira RFM</span><span>Vendedores</span><span>Cohort</span><span>Mix</span>
+    </div>
+  </a>
+  <a class="module-card" href="/operacoes">
+    <div class="mc-ic">🚚</div>
+    <h2>JOGA Operações</h2>
+    <p>Gestão logística ponta a ponta: DRE financeiro, embarques e rastreamento
+       de cargas em mapa em tempo real.</p>
+    <div class="feats">
+      <span>DRE</span><span>Embarques</span><span>Rastreamento</span><span>Mapa</span>
+    </div>
+  </a>
+</div>
+{% endblock %}

@@ -1,0 +1,141 @@
+{% extends "_shell.html" %}
+{% block title %}Carteira RFM{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Carteira RFM</h1>
+  <p class="desc">Segmentação inteligente por Recência, Frequência e Valor — régua personalizada por cliente.</p>
+</div>
+
+<div class="grid cols-2">
+  <div class="card chart-card"><h3>Segmentos <span class="sub">clique para filtrar a tabela</span></h3><div class="chart-wrap sm"><canvas id="donut"></canvas></div></div>
+  <div class="card chart-card"><h3>Distribuição de recência <span class="sub">dias sem comprar</span></h3><div class="chart-wrap sm"><canvas id="hist"></canvas></div></div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div class="filtros">
+    <select id="f-vend"><option value="">Todos os vendedores</option></select>
+    <select id="f-uf"><option value="">Todas as UFs</option></select>
+    <input id="f-busca" placeholder="🔍 cliente, cidade, código…" style="min-width:220px;">
+    <select id="f-ord">
+      <option value="receita_perdida">Ordenar: Receita em risco</option>
+      <option value="venda_12m">Venda 12m</option>
+      <option value="lucro_12m">Lucro 12m</option>
+      <option value="recencia">Recência</option>
+      <option value="frequencia">Frequência</option>
+    </select>
+    <span style="flex:1"></span>
+    <a class="btn ghost sm" id="csv">⬇ CSV</a>
+  </div>
+  <div id="chips" style="display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px;"></div>
+
+  <table class="data">
+    <thead><tr>
+      <th>Cliente</th><th>Cidade/UF</th><th>Vendedor</th><th>Segmento</th>
+      <th class="num">Recência</th><th class="num">Freq 12m</th><th class="num">Venda 12m</th>
+      <th class="num">Receita em risco</th><th>Status</th>
+    </tr></thead>
+    <tbody id="rows"><tr><td colspan="9" class="loading"><span class="spin"></span></td></tr></tbody>
+  </table>
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px;">
+    <span class="muted" id="info"></span>
+    <div><button class="btn ghost sm" id="prev">‹ Anterior</button> <button class="btn ghost sm" id="next">Próximo ›</button></div>
+  </div>
+</div>
+
+<div class="backdrop" id="bk"></div>
+<div class="side-panel" id="panel"></div>
+{% endblock %}
+{% block scripts %}
+<script>
+let SEGS=[], STAT=[], OFFSET=0, LIMIT=50, TOTAL=0;
+const SEG_KEYS=['champions','loyal','cant_lose','at_risk','new','potential_loyalist','lost','hibernating'];
+
+async function meta(){
+  const r = await api('/comercial/api/carteira/rfm');
+  // donut
+  new Chart(donut,{type:'doughnut',data:{
+    labels:Object.keys(r.segmentos).map(s=>NOME_SEG[s]||s),
+    datasets:[{data:Object.values(r.segmentos),backgroundColor:Object.keys(r.segmentos).map(s=>COR_SEG[s]),borderWidth:0}]
+  },options:{maintainAspectRatio:false,cutout:'58%',plugins:{legend:{position:'right',labels:{boxWidth:11,font:{size:11}}}},
+    onClick:(e,el)=>{if(el.length){const seg=Object.keys(r.segmentos)[el[0].index]; toggleSeg(seg);}}}});
+  // histograma
+  new Chart(hist,{type:'bar',data:{labels:r.histograma_recencia.map(b=>b.bin),
+    datasets:[{data:r.histograma_recencia.map(b=>b.count),backgroundColor:CSS('--accent2')}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+  // filtros
+  const fv=document.getElementById('f-vend');
+  r.vendedores_ativos.forEach(v=>fv.innerHTML+=`<option value="${v.codusur}">${v.nome}</option>`);
+  const fu=document.getElementById('f-uf');
+  r.ufs_ativas.forEach(u=>fu.innerHTML+=`<option value="${u}">${u}</option>`);
+  // chips de segmento
+  document.getElementById('chips').innerHTML = SEG_KEYS.map(s=>
+    `<span class="chip" data-seg="${s}">${NOME_SEG[s]} (${r.segmentos[s]||0})</span>`).join('');
+  document.querySelectorAll('.chip[data-seg]').forEach(c=>c.onclick=()=>toggleSeg(c.dataset.seg));
+}
+function toggleSeg(s){ const i=SEGS.indexOf(s); if(i<0)SEGS.push(s); else SEGS.splice(i,1);
+  document.querySelectorAll('.chip[data-seg]').forEach(c=>c.classList.toggle('on', SEGS.includes(c.dataset.seg)));
+  OFFSET=0; load(); }
+function params(){
+  const p=new URLSearchParams();
+  const v=document.getElementById('f-vend').value; if(v)p.set('vendedor',v);
+  const u=document.getElementById('f-uf').value; if(u)p.set('uf',u);
+  const b=document.getElementById('f-busca').value.trim(); if(b)p.set('busca',b);
+  p.set('ordenar',document.getElementById('f-ord').value);
+  if(SEGS.length)p.set('segmento',SEGS.join(','));
+  p.set('limit',LIMIT); p.set('offset',OFFSET);
+  return p.toString();
+}
+async function load(){
+  const d = await api('/comercial/api/carteira/clientes?'+params());
+  TOTAL=d.total;
+  document.getElementById('rows').innerHTML = d.rows.length? d.rows.map(c=>
+    `<tr class="clickable" onclick="drill(${c.codcli})">
+      <td>${c.cliente}<br><small class="muted">#${c.codcli}</small></td>
+      <td>${c.cidade||''}/${c.uf||''}</td>
+      <td class="muted">${c.vendedor||''}</td>
+      <td><span class="seg ${c.segmento}">${NOME_SEG[c.segmento]}</span></td>
+      <td class="num">${c.recencia_dias}d</td>
+      <td class="num">${c.frequencia_12m}</td>
+      <td class="num">${BRLc(c.venda_12m)}</td>
+      <td class="num">${BRLc(c.receita_perdida_proj)}</td>
+      <td><span class="tag ${c.status_personalizada}">${c.status_personalizada}</span></td>
+    </tr>`).join('') : '<tr><td colspan="9" class="loading">Nenhum cliente neste filtro.</td></tr>';
+  document.getElementById('info').textContent = `${NUM(TOTAL)} clientes · mostrando ${d.rows.length} (a partir de ${OFFSET+1})`;
+}
+async function drill(codcli){
+  const d = await api('/comercial/api/carteira/cliente/'+codcli);
+  const c=d.cliente;
+  document.getElementById('panel').innerHTML = `
+    <span class="fechar" onclick="fecha()">×</span>
+    <h2 style="font-size:20px;">${c.cliente}</h2>
+    <p class="muted">#${c.codcli} · ${c.cidade||''}/${c.uf||''} · ${c.telefone||''}</p>
+    <div style="margin:10px 0 18px;"><span class="seg ${c.segmento}">${NOME_SEG[c.segmento]}</span>
+      <span class="tag ${c.status_personalizada}" style="margin-left:6px;">${c.status_personalizada}</span></div>
+    <div class="grid cols-2" style="gap:10px;">
+      <div class="card"><div class="label muted">Venda 12m</div><div style="font-family:var(--mono);font-size:18px;">${BRLc(c.venda_12m)}</div></div>
+      <div class="card"><div class="label muted">Lucro 12m</div><div style="font-family:var(--mono);font-size:18px;">${BRLc(c.lucro_12m)}</div></div>
+      <div class="card"><div class="label muted">Recência</div><div style="font-family:var(--mono);font-size:18px;">${c.recencia_dias} dias</div></div>
+      <div class="card"><div class="label muted">Ciclo médio</div><div style="font-family:var(--mono);font-size:18px;">${c.ciclo_pessoal||'—'} d</div></div>
+    </div>
+    <h3 style="margin:20px 0 10px;">Histórico mensal</h3>
+    <div class="chart-wrap sm"><canvas id="dh"></canvas></div>
+    <h3 style="margin:20px 0 10px;">Top departamentos</h3>
+    ${d.deptos.map(dp=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+       <span>${dp.nome}</span><span style="font-family:var(--mono);">${BRLc(dp.venda)}</span></div>`).join('')}
+  `;
+  abrir();
+  new Chart(document.getElementById('dh'),{type:'bar',data:{labels:d.historico.map(h=>h.AnoMes.slice(2)),
+    datasets:[{data:d.historico.map(h=>h.VendaLiquida),backgroundColor:CSS('--accent')}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+}
+function abrir(){panel.classList.add('open');bk.classList.add('open');}
+function fecha(){panel.classList.remove('open');bk.classList.remove('open');}
+document.getElementById('bk').onclick=fecha;
+['f-vend','f-uf','f-ord'].forEach(id=>document.getElementById(id).onchange=()=>{OFFSET=0;load();});
+let t; document.getElementById('f-busca').oninput=()=>{clearTimeout(t);t=setTimeout(()=>{OFFSET=0;load();},300);};
+document.getElementById('prev').onclick=()=>{if(OFFSET>0){OFFSET-=LIMIT;load();}};
+document.getElementById('next').onclick=()=>{if(OFFSET+LIMIT<TOTAL){OFFSET+=LIMIT;load();}};
+document.getElementById('csv').onclick=()=>{location.href='/comercial/api/carteira/csv?'+params();};
+meta().then(load).catch(e=>console.error(e));
+</script>
+{% endblock %}

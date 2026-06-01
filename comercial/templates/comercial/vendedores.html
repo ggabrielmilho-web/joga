@@ -1,0 +1,70 @@
+{% extends "_shell.html" %}
+{% block title %}Vendedores{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Ranking de Vendedores</h1>
+  <p class="desc">Desempenho 12m · venda, lucro, positivação e variação ano a ano.</p>
+</div>
+
+<div class="grid cols-2">
+  <div class="card chart-card"><h3>Top 10 por venda líquida 12m</h3><div class="chart-wrap"><canvas id="topv"></canvas></div></div>
+  <div class="card chart-card"><h3>Distribuição da taxa de positivação</h3><div class="chart-wrap"><canvas id="dist"></canvas></div></div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div class="filtros">
+    <select id="f-tipo"><option value="">Todos os tipos</option><option value="R">Rota (R)</option><option value="I">Interno (I)</option></select>
+    <select id="f-uf"><option value="">Todas UFs</option></select>
+    <input id="f-busca" placeholder="🔍 vendedor ou código…">
+  </div>
+  <table class="data">
+    <thead><tr><th>#</th><th>Vendedor</th><th>Time</th><th>UF</th>
+      <th class="num">Venda 12m</th><th class="num">Lucro 12m</th><th class="num">Ticket</th>
+      <th class="num">Positivação</th><th class="num">YoY</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="9" class="loading"><span class="spin"></span></td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let DADOS=[];
+async function load(){
+  const d = await api('/comercial/api/vendedores');
+  DADOS = d.vendedores;
+  const fu=document.getElementById('f-uf');
+  [...new Set(DADOS.map(v=>v.estado))].sort().forEach(u=>fu.innerHTML+=`<option>${u}</option>`);
+  charts(); render();
+}
+function charts(){
+  const top=[...DADOS].sort((a,b)=>b.venda_liq-a.venda_liq).slice(0,10);
+  new Chart(topv,{type:'bar',data:{labels:top.map(v=>v.nome),
+    datasets:[{data:top.map(v=>v.venda_liq),backgroundColor:CSS('--accent')}]},
+    options:{indexAxis:'y',maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{ticks:{callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}}});
+  const bins=[0,20,40,60,80,100]; const cont=bins.slice(0,-1).map(()=>0);
+  DADOS.forEach(v=>{for(let i=0;i<bins.length-1;i++){if(v.taxa_positivacao>=bins[i]&&v.taxa_positivacao<bins[i+1]+0.001){cont[i]++;break;}}});
+  new Chart(dist,{type:'bar',data:{labels:['0-20%','20-40%','40-60%','60-80%','80-100%'],
+    datasets:[{data:cont,backgroundColor:CSS('--accent2')}]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:false}}}});
+}
+function render(){
+  let rows=DADOS;
+  const t=document.getElementById('f-tipo').value, u=document.getElementById('f-uf').value, b=document.getElementById('f-busca').value.trim().toLowerCase();
+  if(t)rows=rows.filter(v=>v.tipo===t);
+  if(u)rows=rows.filter(v=>v.estado===u);
+  if(b)rows=rows.filter(v=>v.nome.toLowerCase().includes(b)||String(v.codusur).includes(b));
+  document.getElementById('rows').innerHTML = rows.map(v=>{
+    const yoyc = v.yoy_receita>=0?'var(--green)':'var(--red)';
+    return `<tr class="clickable" onclick="location.href='/comercial/vendedor/${v.codusur}'">
+      <td>${v.rank}</td><td>${v.nome}<br><small class="muted">#${v.codusur} · ${v.tipo}</small></td>
+      <td class="muted">${v.time||''}</td><td>${v.estado}</td>
+      <td class="num">${BRLc(v.venda_liq)}</td><td class="num">${BRLc(v.lucro)}</td>
+      <td class="num">${BRLc(v.ticket_medio)}</td><td class="num">${PCT(v.taxa_positivacao)}</td>
+      <td class="num" style="color:${yoyc}">${v.yoy_receita>=0?'▲':'▼'} ${PCT(Math.abs(v.yoy_receita))}</td></tr>`;
+  }).join('') || '<tr><td colspan="9" class="loading">Nenhum vendedor.</td></tr>';
+}
+['f-tipo','f-uf'].forEach(id=>document.getElementById(id).onchange=render);
+document.getElementById('f-busca').oninput=render;
+load().catch(e=>console.error(e));
+</script>
+{% endblock %}

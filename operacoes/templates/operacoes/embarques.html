@@ -1,0 +1,114 @@
+{% extends "_shell.html" %}
+{% block title %}Embarques{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>JOGA Operações — Logística</h1>
+  <p class="desc">Gestão de embarques, rastreamento e financeiro · {{ EMPRESA_EXEMPLO }}</p>
+</div>
+{% set sub='embarques' %}{% include 'operacoes/_optabs.html' %}
+
+<div class="grid cols-4">
+  <div class="card kpi-card"><div class="label">📦 Abertas</div><div class="valor" id="k-abertas">—</div></div>
+  <div class="card kpi-card"><div class="label">🚚 Em rota</div><div class="valor" id="k-rota">—</div></div>
+  <div class="card kpi-card"><div class="label">✅ Entregues</div><div class="valor" id="k-entregues">—</div></div>
+  <div class="card kpi-card"><div class="label">💰 Frete total</div><div class="valor sm" id="k-frete">—</div></div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div class="filtros">
+    <select id="f-status"><option value="">Todos os status</option><option>Aberta</option><option>Em rota</option><option>Entregue</option><option>Cancelada</option></select>
+    <input id="f-busca" placeholder="🔍 cliente, motorista, destino, placa…" style="min-width:240px;">
+    <span style="flex:1"></span>
+    {% if user_role != 'viewer' %}<button class="btn sm" id="btn-novo">＋ Novo embarque</button>{% endif %}
+  </div>
+  <table class="data"><thead><tr><th>#</th><th>Status</th><th>Cliente</th><th>Rota</th><th>Motorista</th>
+    <th>Placa</th><th class="num">Dist.</th><th class="num">Frete</th><th class="num">Progresso</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="9" class="loading"><span class="spin"></span></td></tr></tbody></table>
+</div>
+
+<div class="modal-overlay" id="modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2>Novo embarque</h2>
+      <span class="x" onclick="fecha()">×</span>
+    </div>
+    <p class="modal-desc">Lançar uma nova carga — entra na lista com status <b>Aberta</b>.</p>
+
+    <div class="form-field">
+      <label for="n-cliente">Cliente</label>
+      <input id="n-cliente" placeholder="Nome do cliente">
+    </div>
+    <div class="form-grid">
+      <div class="form-field"><label for="n-origem">Origem</label><select id="n-origem"></select></div>
+      <div class="form-field"><label for="n-destino">Destino</label><select id="n-destino"></select></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-field"><label for="n-motorista">Motorista</label><input id="n-motorista" placeholder="Nome do motorista"></div>
+      <div class="form-field"><label for="n-placa">Placa</label><input id="n-placa" placeholder="ABC-1234"></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-field"><label for="n-peso">Peso (kg)</label><input id="n-peso" type="number" value="1000"></div>
+      <div class="form-field"><label for="n-frete">Valor do frete (R$)</label><input id="n-frete" type="number" value="2500"></div>
+    </div>
+    <button class="btn block" id="n-salvar">Lançar embarque</button>
+    <div class="form-erro" id="n-erro"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const STC={'Aberta':'normal','Em rota':'atencao','Entregue':'ok','Cancelada':'urgente'};
+const $ = id => document.getElementById(id);
+async function kpis(){
+  const k=await api('/operacoes/api/embarques/kpis');
+  $('k-abertas').textContent=NUM(k.abertas); $('k-rota').textContent=NUM(k.em_rota);
+  $('k-entregues').textContent=NUM(k.entregues); $('k-frete').textContent=BRLc(k.frete_total);
+}
+async function load(){
+  const st=document.getElementById('f-status').value, b=document.getElementById('f-busca').value.trim();
+  const d=await api('/operacoes/api/embarques/cargas?'+new URLSearchParams({status:st,busca:b}));
+  document.getElementById('rows').innerHTML = d.cargas.map(c=>
+    `<tr><td>#${c.id}</td><td><span class="tag ${STC[c.status]||'normal'}">${c.status}</span></td>
+     <td>${c.cliente}</td><td>${c.origem} → ${c.destino}</td><td class="muted">${c.motorista}</td>
+     <td style="font-family:var(--mono)">${c.placa}</td><td class="num">${c.distancia_km} km</td>
+     <td class="num">${BRLc(c.valor_frete)}</td>
+     <td class="num">${c.status==='Em rota'?prog(c.progresso):(c.status==='Entregue'?'100%':'—')}</td></tr>`).join('')
+     || '<tr><td colspan="9" class="loading">Nenhuma carga.</td></tr>';
+}
+function prog(p){return `<div style="display:flex;align-items:center;gap:6px;justify-content:flex-end;">
+  <div style="width:60px;height:6px;background:var(--surface2);border-radius:4px;overflow:hidden;">
+  <div style="width:${p}%;height:100%;background:var(--accent);"></div></div>${p}%</div>`;}
+document.getElementById('f-status').onchange=load;
+let t;document.getElementById('f-busca').oninput=()=>{clearTimeout(t);t=setTimeout(load,250);};
+
+// ── Novo embarque ──
+function abre(){ $('modal').classList.add('open'); }
+function fecha(){ $('modal').classList.remove('open'); }
+window.fecha = fecha;
+const btnNovo = $('btn-novo');
+if(btnNovo){
+  btnNovo.onclick = async ()=>{
+    if(!$('n-origem').options.length){
+      const c = await api('/operacoes/api/embarques/cidades');
+      const opts = c.cidades.map(x=>`<option>${x}</option>`).join('');
+      $('n-origem').innerHTML = opts; $('n-destino').innerHTML = opts;
+      $('n-destino').selectedIndex = 1;
+    }
+    abre();
+  };
+  // fecha ao clicar no fundo (fora da caixa)
+  $('modal').addEventListener('click', e=>{ if(e.target === $('modal')) fecha(); });
+  $('n-salvar').onclick = async ()=>{
+    $('n-erro').textContent = '';
+    const body = {cliente:$('n-cliente').value, origem:$('n-origem').value, destino:$('n-destino').value,
+      motorista:$('n-motorista').value, placa:$('n-placa').value, peso_kg:$('n-peso').value, valor_frete:$('n-frete').value};
+    const r = await fetch('/operacoes/api/embarques/cargas', {method:'POST',headers:{'Content-Type':'application/json'},
+      credentials:'same-origin', body:JSON.stringify(body)});
+    const d = await r.json();
+    if(d.ok){ fecha(); $('n-cliente').value=$('n-motorista').value=$('n-placa').value=''; kpis(); load(); }
+    else $('n-erro').textContent = d.error || 'Erro ao lançar.';
+  };
+}
+kpis(); load().catch(e=>console.error(e));
+</script>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "_shell.html" %}
+{% block title %}Tendências{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Tendências · Cohort de Retenção</h1>
+  <p class="desc">Quantos clientes de cada mês de aquisição continuam comprando ao longo do tempo.</p>
+</div>
+<div class="card">
+  <div id="cohort" style="overflow-x:auto;"><div class="loading"><span class="spin"></span></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function cor(p){ // verde forte → vermelho
+  if(p==null) return 'transparent';
+  const h = 145 - (145*(1-p)); // 145=verde, 0=vermelho
+  return `hsl(${h}, 55%, ${22+p*18}%)`;
+}
+async function load(){
+  const d = await api('/comercial/api/tendencias/cohort?periodo=12');
+  if(!d.cohorts.length){document.getElementById('cohort').innerHTML='<p class="loading">Sem dados.</p>';return;}
+  const maxM = Math.max(...d.cohorts.map(c=>c.retencao.length));
+  let h = '<table class="data" style="border-collapse:separate;border-spacing:3px;"><thead><tr><th>Aquisição</th><th class="num">Clientes</th>';
+  for(let m=0;m<maxM;m++) h+=`<th class="num">M+${m}</th>`;
+  h+='</tr></thead><tbody>';
+  d.cohorts.forEach(c=>{
+    h+=`<tr><td>${c.aquisicao}</td><td class="num">${c.tamanho}</td>`;
+    c.retencao.forEach((p,m)=>{
+      h+=`<td class="num" style="background:${cor(p)};border-radius:6px;color:#fff;" title="${c.absolutos[m]} clientes">${(p*100).toFixed(0)}%</td>`;
+    });
+    for(let m=c.retencao.length;m<maxM;m++) h+='<td></td>';
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById('cohort').innerHTML=h;
+}
+load().catch(e=>console.error(e));
+</script>
+{% endblock %}

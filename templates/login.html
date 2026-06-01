@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · {{ MARCA }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand">
+      <div class="logo">J</div>
+      <div>
+        <div class="nome">{{ MARCA }}</div>
+        <div class="sub">Soluções Empresariais</div>
+      </div>
+    </div>
+    <h1>Demonstração</h1>
+    <p class="desc">Escolha um perfil para explorar a plataforma. Cada perfil enxerga
+       um escopo de dados diferente (controle de acesso real).</p>
+
+    <div class="papel-grid">
+      <button class="papel" data-papel="diretor">
+        <div class="pic">👔</div>
+        <div class="pt"><b>Diretor</b><small>Vê tudo — visão executiva completa</small></div>
+      </button>
+      <button class="papel" data-papel="supervisor">
+        <div class="pic">🧭</div>
+        <div class="pt"><b>Supervisor</b><small>Vê apenas o time dele (Equipe Capital)</small></div>
+      </button>
+      <button class="papel" data-papel="vendedor">
+        <div class="pic">🎯</div>
+        <div class="pt"><b>Vendedor</b><small>Vê apenas a própria carteira</small></div>
+      </button>
+      <button class="papel" data-papel="viewer">
+        <div class="pic">👁</div>
+        <div class="pt"><b>Visitante</b><small>Leitura geral, sem edição</small></div>
+      </button>
+    </div>
+    <p class="demo-note">Ambiente de demonstração · dados 100% fictícios</p>
+  </div>
+</div>
+<script>
+document.querySelectorAll('.papel').forEach(b => b.addEventListener('click', async () => {
+  b.style.opacity = .6;
+  const r = await fetch('/login', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    credentials:'same-origin', body: JSON.stringify({papel: b.dataset.papel})
+  });
+  const d = await r.json();
+  if(d.ok) location.href = d.redirect; else { b.style.opacity=1; alert(d.error||'Erro'); }
+}));
+</script>
+</body>
+</html>

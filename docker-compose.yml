@@ -1,0 +1,31 @@
+# JOGA Portfólio — stack Docker Swarm (Portainer) + Traefik.
+# Espelha o padrão do Tabela Auditoria (rizza): imagem do GHCR, rede carvalhonet,
+# entrypoint websecure, certresolver letsencryptresolver. Subdomínio joga.carvalhoia.com.
+#
+# A imagem é buildada e publicada automaticamente pelo GitHub Actions
+# (.github/workflows/deploy.yml) a cada push na branch main.
+version: "3.7"
+
+services:
+  app:
+    image: ghcr.io/ggabrielmilho-web/joga:latest
+    networks:
+      - carvalhonet
+    environment:
+      - SECRET_KEY=joga-demo-2025-troque-esta-chave-forte
+      - DEMO_MODE=true
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.joga.rule=Host(`joga.carvalhoia.com`)
+        - traefik.http.routers.joga.entrypoints=websecure
+        - traefik.http.routers.joga.tls.certresolver=letsencryptresolver
+        - traefik.http.services.joga.loadbalancer.server.port=5000
+        - traefik.docker.network=carvalhonet
+
+networks:
+  carvalhonet:
+    external: true

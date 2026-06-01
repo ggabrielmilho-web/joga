@@ -1,0 +1,10 @@
+.env
+.git
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+# dados gerados no build (seed roda no Dockerfile)
+data/demo.sqlite
+data/demo_comercial.json

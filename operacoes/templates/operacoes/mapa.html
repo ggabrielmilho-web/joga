@@ -1,0 +1,109 @@
+{% extends "_shell.html" %}
+{% block title %}Rastreamento{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  #map{height:580px;border-radius:var(--radius);border:1px solid var(--border);}
+  .leaflet-popup-content-wrapper{background:var(--surface);color:var(--text);border:1px solid var(--border2);}
+  .leaflet-popup-tip{background:var(--surface);}
+  .leaflet-container{background:#0e0f14;}
+  .truck-ic{font-size:24px;filter:drop-shadow(0 2px 3px #000);cursor:pointer;}
+  .veic-item{cursor:pointer;}
+  .veic-item.sel{border-color:var(--accent);}
+  .det-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;}
+  .det-row .l{color:var(--text-mute);}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Rastreamento de Cargas</h1>
+  <p class="desc">Posição atual das cargas em rota · clique num caminhão para ver o trajeto.</p>
+</div>
+{% set sub='mapa' %}{% include 'operacoes/_optabs.html' %}
+
+<div class="grid" style="grid-template-columns:1fr 360px;gap:16px;">
+  <div class="card" style="padding:10px;"><div id="map"></div></div>
+  <div class="card"><div id="painel"><div class="loading"><span class="spin"></span></div></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let map, selLayer, markers={}, POS=[];
+
+function initMap(){
+  map = L.map('map').setView([-19.5,-45.5], 6);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    {attribution:'© OpenStreetMap, © CARTO', maxZoom:19}).addTo(map);
+  selLayer = L.layerGroup().addTo(map);
+}
+function truckIcon(){ return L.divIcon({className:'', html:'<div class="truck-ic">🚚</div>', iconSize:[26,26], iconAnchor:[13,13]}); }
+
+async function load(){
+  initMap();
+  const d = await api('/operacoes/api/rastreamento/posicoes');
+  POS = d.posicoes;
+  const bounds=[];
+  POS.forEach(c=>{
+    const m = L.marker([c.pos_lat,c.pos_lng], {icon:truckIcon()}).addTo(map);
+    m.on('click', ()=>selecionar(c.id));
+    markers[c.id]=m; bounds.push([c.pos_lat,c.pos_lng]);
+  });
+  if(bounds.length) map.fitBounds(bounds, {padding:[50,50], maxZoom:7});
+  renderLista();
+}
+
+function renderLista(){
+  selLayer.clearLayers();
+  document.querySelectorAll('.veic-item').forEach(e=>e.classList.remove('sel'));
+  const html = `<h3>Em rota agora · <span class="muted">${POS.length} cargas</span></h3>
+    <div style="margin-top:10px;display:flex;flex-direction:column;gap:8px;max-height:530px;overflow-y:auto;">` +
+    (POS.map(c=>
+    `<div class="card veic-item" id="li-${c.id}" style="padding:11px;" onclick="selecionar(${c.id})">
+      <div style="display:flex;justify-content:space-between;"><b>#${c.id}</b><span class="tag atencao">${c.progresso}%</span></div>
+      <div style="font-size:13px;margin-top:4px;">${c.cliente}</div>
+      <div class="muted" style="font-size:12px;">${c.origem} → ${c.destino}</div>
+      <div class="muted" style="font-size:12px;">🚚 ${c.motorista} · ${c.placa}</div>
+    </div>`).join('') || '<p class="muted">Nenhuma carga em rota.</p>') + '</div>';
+  document.getElementById('painel').innerHTML = html;
+}
+
+function selecionar(id){
+  const c = POS.find(x=>x.id===id); if(!c) return;
+  // desenha rota da carga: percorrido (origem→pos) sólido, restante (pos→destino) tracejado
+  selLayer.clearLayers();
+  L.polyline([[c.origem_lat,c.origem_lng],[c.pos_lat,c.pos_lng]],{color:CSS('--accent'),weight:4}).addTo(selLayer);
+  L.polyline([[c.pos_lat,c.pos_lng],[c.destino_lat,c.destino_lng]],{color:'rgba(155,157,168,.6)',weight:3,dashArray:'6,7'}).addTo(selLayer);
+  L.circleMarker([c.origem_lat,c.origem_lng],{radius:6,color:CSS('--accent2'),fillColor:CSS('--accent2'),fillOpacity:.9}).addTo(selLayer).bindTooltip('Origem: '+c.origem);
+  L.circleMarker([c.destino_lat,c.destino_lng],{radius:7,color:CSS('--green'),fillColor:CSS('--green'),fillOpacity:.9}).addTo(selLayer).bindTooltip('Destino: '+c.destino);
+  map.fitBounds([[c.origem_lat,c.origem_lng],[c.destino_lat,c.destino_lng]], {padding:[70,70]});
+  if(markers[id]) markers[id].bindPopup(`<b>Carga #${c.id}</b> · ${c.progresso}%`).openPopup();
+  renderDetalhe(c);
+}
+
+function renderDetalhe(c){
+  const restante = 100 - c.progresso;
+  document.getElementById('painel').innerHTML = `
+    <a class="btn ghost sm" onclick="renderLista()" style="cursor:pointer;">‹ Voltar</a>
+    <h3 style="margin-top:12px;">Carga #${c.id}</h3>
+    <span class="tag atencao">Em rota · ${c.progresso}%</span>
+    <div style="margin:14px 0;">
+      <div style="height:8px;background:var(--surface2);border-radius:5px;overflow:hidden;">
+        <div style="width:${c.progresso}%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));"></div>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:6px;">${c.origem} → ${c.destino} · faltam ${restante}%</div>
+    </div>
+    <div class="det-row"><span class="l">Cliente</span><span>${c.cliente}</span></div>
+    <div class="det-row"><span class="l">Motorista</span><span>${c.motorista}</span></div>
+    <div class="det-row"><span class="l">Placa</span><span style="font-family:var(--mono)">${c.placa}</span></div>
+    <div class="det-row"><span class="l">Distância</span><span style="font-family:var(--mono)">${c.distancia_km} km</span></div>
+    <div class="det-row"><span class="l">Frete</span><span style="font-family:var(--mono)">${BRLc(c.valor_frete)}</span></div>
+    <div class="det-row"><span class="l">Peso</span><span style="font-family:var(--mono)">${NUM(c.peso_kg)} kg</span></div>
+    <div class="det-row"><span class="l">Saída</span><span>${c.data_saida}</span></div>
+    <div class="det-row"><span class="l">Previsão</span><span>${c.previsao}</span></div>`;
+}
+
+window.selecionar=selecionar; window.renderLista=renderLista;
+load().catch(e=>console.error(e));
+</script>
+{% endblock %}

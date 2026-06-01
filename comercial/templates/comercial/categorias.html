@@ -1,0 +1,33 @@
+{% extends "_shell.html" %}
+{% block title %}Categorias{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Categorias / Departamentos</h1>
+  <p class="desc">Participação na venda, margem e penetração na carteira (12m).</p>
+</div>
+<div class="grid cols-2">
+  <div class="card chart-card"><h3>Venda por departamento</h3><div class="chart-wrap"><canvas id="bar"></canvas></div></div>
+  <div class="card chart-card"><h3>Margem por departamento</h3><div class="chart-wrap"><canvas id="marg"></canvas></div></div>
+</div>
+<div class="card" style="margin-top:16px;">
+  <table class="data"><thead><tr><th>Departamento</th><th class="num">Venda 12m</th><th class="num">Lucro</th>
+    <th class="num">Margem</th><th class="num">Clientes</th><th class="num">Share</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="6" class="loading"><span class="spin"></span></td></tr></tbody></table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function load(){
+  const d = await api('/comercial/api/categorias');
+  const c = d.categorias;
+  new Chart(bar,{type:'bar',data:{labels:c.map(x=>x.nome),datasets:[{data:c.map(x=>x.venda),backgroundColor:CSS('--accent')}]},
+    options:{indexAxis:'y',maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}}});
+  new Chart(marg,{type:'bar',data:{labels:c.map(x=>x.nome),datasets:[{data:c.map(x=>x.margem),backgroundColor:CSS('--accent2')}]},
+    options:{indexAxis:'y',maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>v+'%'}}}}});
+  document.getElementById('rows').innerHTML = c.map(x=>
+    `<tr><td>${x.nome}</td><td class="num">${BRLc(x.venda)}</td><td class="num">${BRLc(x.lucro)}</td>
+     <td class="num">${PCT(x.margem)}</td><td class="num">${NUM(x.clientes_unicos)}</td><td class="num">${PCT(x.share)}</td></tr>`).join('');
+}
+load().catch(e=>console.error(e));
+</script>
+{% endblock %}
