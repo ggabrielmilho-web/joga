@@ -1,35 +1,11 @@
-"""Autenticação demo + RBAC.
+"""Autenticação (e-mail/senha) + RBAC.
 
-Sem banco de senhas: a tela de login é um seletor de papel (1 clique).
-Cada papel injeta na sessão as MESMAS chaves que os dois módulos já leem,
-para que o RBAC continue real (vendedor vê só a própria carteira, etc.).
+A validação de credenciais fica em shared/auth_db.py (Postgres em produção,
+SQLite local). Aqui ficam: setar a sessão pós-login, decorators e RBAC.
+O RBAC continua real (vendedor vê só a própria carteira, etc.).
 """
 import functools
 from flask import session, request, jsonify, redirect
-
-# Usuários demo. codusur/codsupervisor batem com os dados sintéticos do seed.
-DEMO_USERS = {
-    'diretor': {
-        'user_id': 1, 'nome': 'Diretor (Demo)', 'role': 'admin',
-        'codusur': None, 'codsupervisor': None,
-        'tipos_permitidos': ['receita', 'despesa', 'embarques', 'dre'],
-    },
-    'supervisor': {
-        'user_id': 2, 'nome': 'Supervisor — Equipe Capital', 'role': 'supervisor',
-        'codusur': None, 'codsupervisor': 11,
-        'tipos_permitidos': ['receita', 'embarques'],
-    },
-    'vendedor': {
-        'user_id': 3, 'nome': 'Vendedor — Carlos Nunes', 'role': 'vendedor',
-        'codusur': 107, 'codsupervisor': None,
-        'tipos_permitidos': ['receita'],
-    },
-    'viewer': {
-        'user_id': 4, 'nome': 'Visitante (somente leitura)', 'role': 'viewer',
-        'codusur': None, 'codsupervisor': None,
-        'tipos_permitidos': ['receita', 'despesa', 'embarques', 'dre'],
-    },
-}
 
 ROLE_LABEL = {
     'admin': 'Diretor', 'supervisor': 'Supervisor',
@@ -37,20 +13,16 @@ ROLE_LABEL = {
 }
 
 
-def login_como(papel):
-    """Seta a sessão com o usuário demo do papel. Retorna False se papel inválido."""
-    u = DEMO_USERS.get(papel)
-    if not u:
-        return False
+def login_session(user):
+    """Popula a sessão a partir do dict devolvido por auth_db.autenticar()."""
     session.clear()
-    session['user_id'] = u['user_id']
-    session['nome'] = u['nome']
-    session['role'] = u['role']
-    session['codusur'] = u['codusur']
-    session['codsupervisor'] = u['codsupervisor']
-    session['tipos_permitidos'] = u['tipos_permitidos']
+    session['user_id'] = user['user_id']
+    session['nome'] = user['nome']
+    session['role'] = user['role']
+    session['codusur'] = user.get('codusur')
+    session['codsupervisor'] = user.get('codsupervisor')
+    session['tipos_permitidos'] = user.get('tipos_permitidos', [])
     session['must_change_password'] = False
-    return True
 
 
 def login_required(f):

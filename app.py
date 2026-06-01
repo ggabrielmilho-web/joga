@@ -11,7 +11,8 @@ import os
 from flask import Flask, render_template, redirect, request, session, jsonify
 
 import config
-from shared.auth import login_required, login_como, DEMO_USERS, ROLE_LABEL
+from shared.auth import login_required, login_session, ROLE_LABEL
+from shared.auth_db import autenticar, init_auth
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.secret_key = config.SECRET_KEY
@@ -43,21 +44,24 @@ def landing():
     return render_template('landing.html', active='home')
 
 
-# ── Login (seletor de papel) ──
+# ── Login (e-mail + senha) ──
 @app.route('/login', methods=['GET'])
 def login_page():
     if 'user_id' in session:
         return redirect('/')
-    return render_template('login.html', papeis=DEMO_USERS)
+    return render_template('login.html')
 
 
 @app.route('/login', methods=['POST'])
 def login_post():
     data = request.get_json(silent=True) or request.form
-    papel = (data.get('papel') or '').strip().lower()
-    if login_como(papel):
+    email = (data.get('email') or '').strip()
+    senha = data.get('senha') or ''
+    user = autenticar(email, senha)
+    if user:
+        login_session(user)
         return jsonify({'ok': True, 'redirect': '/'})
-    return jsonify({'ok': False, 'error': 'Papel inválido'}), 400
+    return jsonify({'ok': False, 'error': 'E-mail ou senha inválidos'}), 401
 
 
 @app.route('/logout')
@@ -81,5 +85,6 @@ def api_me():
 
 if __name__ == '__main__':
     print(f"\n  {config.MARCA_FULL} — portfólio demo")
+    init_auth()  # garante database + tabela joga_users + admin
     print("  http://localhost:5000\n")
     app.run(host='0.0.0.0', port=5000, debug=True)

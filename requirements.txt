@@ -1,5 +1,4 @@
 Flask==3.0.0
 gunicorn==21.2.0
+psycopg2-binary==2.9.10
 pytest==7.4.3
-# Postgres opcional (só se DB_HOST setado em produção):
-# psycopg2-binary==2.9.10

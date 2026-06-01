@@ -12,5 +12,5 @@ RUN python -X utf8 data/seed_demo.py --all
 
 EXPOSE 5000
 
-# Servidor de produção (Gunicorn). app:app = objeto Flask em app.py
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "--timeout", "120", "app:app"]
+# No start: cria/garante o banco de auth (Postgres) e sobe o Gunicorn.
+CMD ["sh", "-c", "python -X utf8 init_db.py && exec gunicorn -w 2 -b 0.0.0.0:5000 --timeout 120 app:app"]

@@ -16,41 +16,47 @@
         <div class="sub">Soluções Empresariais</div>
       </div>
     </div>
-    <h1>Demonstração</h1>
-    <p class="desc">Escolha um perfil para explorar a plataforma. Cada perfil enxerga
-       um escopo de dados diferente (controle de acesso real).</p>
+    <h1>Acesso à plataforma</h1>
+    <p class="desc">Entre com seu e-mail e senha.</p>
 
-    <div class="papel-grid">
-      <button class="papel" data-papel="diretor">
-        <div class="pic">👔</div>
-        <div class="pt"><b>Diretor</b><small>Vê tudo — visão executiva completa</small></div>
-      </button>
-      <button class="papel" data-papel="supervisor">
-        <div class="pic">🧭</div>
-        <div class="pt"><b>Supervisor</b><small>Vê apenas o time dele (Equipe Capital)</small></div>
-      </button>
-      <button class="papel" data-papel="vendedor">
-        <div class="pic">🎯</div>
-        <div class="pt"><b>Vendedor</b><small>Vê apenas a própria carteira</small></div>
-      </button>
-      <button class="papel" data-papel="viewer">
-        <div class="pic">👁</div>
-        <div class="pt"><b>Visitante</b><small>Leitura geral, sem edição</small></div>
-      </button>
-    </div>
+    <form id="form" autocomplete="on">
+      <div class="form-field">
+        <label for="email">E-mail</label>
+        <input id="email" type="email" placeholder="seu@email.com.br" autofocus>
+      </div>
+      <div class="form-field">
+        <label for="senha">Senha</label>
+        <input id="senha" type="password" placeholder="••••••••">
+      </div>
+      <button class="btn block" type="submit">Entrar</button>
+      <div class="form-erro" id="erro"></div>
+    </form>
     <p class="demo-note">Ambiente de demonstração · dados 100% fictícios</p>
   </div>
 </div>
 <script>
-document.querySelectorAll('.papel').forEach(b => b.addEventListener('click', async () => {
-  b.style.opacity = .6;
-  const r = await fetch('/login', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    credentials:'same-origin', body: JSON.stringify({papel: b.dataset.papel})
-  });
-  const d = await r.json();
-  if(d.ok) location.href = d.redirect; else { b.style.opacity=1; alert(d.error||'Erro'); }
-}));
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  const erro = document.getElementById('erro');
+  erro.textContent = ''; btn.disabled = true; btn.textContent = 'Entrando…';
+  try {
+    const r = await fetch('/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        email: document.getElementById('email').value,
+        senha: document.getElementById('senha').value,
+      })
+    });
+    const d = await r.json();
+    if (d.ok) { location.href = d.redirect; return; }
+    erro.textContent = d.error || 'Erro ao entrar.';
+  } catch (_) {
+    erro.textContent = 'Erro de conexão.';
+  }
+  btn.disabled = false; btn.textContent = 'Entrar';
+});
 </script>
 </body>
 </html>

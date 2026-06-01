@@ -2,6 +2,17 @@
 o controle de acesso por papel não vaza dados entre perfis."""
 import pytest
 from app import app as flask_app
+from shared.auth_db import init_auth
+
+# garante a tabela joga_users + usuários semeados (SQLite local em teste)
+init_auth()
+
+EMAILS = {
+    'diretor':    'joga@adm.com.br',
+    'supervisor': 'supervisor@joga.com.br',
+    'vendedor':   'vendedor@joga.com.br',
+    'viewer':     'viewer@joga.com.br',
+}
 
 
 @pytest.fixture
@@ -11,7 +22,7 @@ def client():
 
 
 def login(client, papel):
-    return client.post('/login', json={'papel': papel})
+    return client.post('/login', json={'email': EMAILS[papel], 'senha': 'admin123'})
 
 
 PAGINAS = [
@@ -29,8 +40,8 @@ APIS = [
 
 
 def test_login_invalido(client):
-    r = login(client, 'fantasma')
-    assert r.status_code == 400
+    r = client.post('/login', json={'email': 'naoexiste@x.com', 'senha': 'errada'})
+    assert r.status_code == 401
 
 
 @pytest.mark.parametrize('url', PAGINAS)
