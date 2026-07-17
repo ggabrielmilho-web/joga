@@ -28,12 +28,16 @@ def login(client, papel):
 PAGINAS = [
     '/', '/comercial/', '/comercial/carteira', '/comercial/vendedores',
     '/comercial/categorias', '/comercial/mix', '/comercial/tendencias',
+    '/comercial/gerencial', '/comercial/radar', '/comercial/metas',
     '/operacoes/', '/operacoes/dre', '/operacoes/embarques', '/operacoes/mapa',
 ]
 APIS = [
     '/comercial/api/dashboard/kpis', '/comercial/api/carteira/rfm',
     '/comercial/api/carteira/clientes?limit=5', '/comercial/api/vendedores',
     '/comercial/api/tendencias/cohort', '/comercial/api/categorias',
+    '/comercial/api/gerencial/cobertura', '/comercial/api/radar/board?dias=60',
+    '/comercial/api/radar/fornecedores', '/comercial/api/metas',
+    '/comercial/api/metas/serie',
     '/operacoes/api/dre', '/operacoes/api/embarques/kpis',
     '/operacoes/api/rastreamento/posicoes',
 ]
@@ -84,3 +88,33 @@ def test_rbac_escopo_carteira(client):
 def test_supervisor_nao_ve_vendedor_de_outro_time(client):
     login(client, 'supervisor')
     assert client.get('/comercial/api/vendedor/100').status_code == 403
+
+
+def test_gerencial_escopo_por_papel(client):
+    login(client, 'diretor')
+    td = client.get('/comercial/api/gerencial/cobertura').get_json()['empresa']['total_clientes']
+    login(client, 'supervisor')
+    ts = client.get('/comercial/api/gerencial/cobertura').get_json()['empresa']['total_clientes']
+    login(client, 'vendedor')
+    tv = client.get('/comercial/api/gerencial/cobertura').get_json()['empresa']['total_clientes']
+    assert td > ts > tv > 0
+
+
+def test_metas_drill_rbac(client):
+    login(client, 'diretor')
+    p = client.get('/comercial/api/metas').get_json()
+    assert p['ok'] and p['times']
+    algum = p['times'][0]['codsupervisor']
+    assert client.get(f'/comercial/api/metas/vendedores?codsupervisor={algum}').status_code == 200
+    # vendedor (time 11) tentando drill de OUTRO time → 403
+    login(client, 'vendedor')
+    assert client.get('/comercial/api/metas/vendedores?codsupervisor=10').status_code == 403
+
+
+def test_radar_drill_produto(client):
+    login(client, 'diretor')
+    board = client.get('/comercial/api/radar/board?dias=60').get_json()
+    assert board['ok'] and board['rows']
+    cp = board['rows'][0]['codprod']
+    d = client.get(f'/comercial/api/radar/produto/{cp}?dias=60').get_json()
+    assert d['ok'] and d['produto']['codprod'] == cp

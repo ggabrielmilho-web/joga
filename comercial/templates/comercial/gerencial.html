@@ -1,0 +1,145 @@
+{% extends "_shell.html" %}
+{% block title %}Gerencial{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Gerencial — Cobertura de Carteira</h1>
+  <p class="desc">Placar de quanto da carteira está <b>em dia</b> (última compra ≤ janela), por Empresa → Time → Vendedor.</p>
+</div>
+
+<div class="card">
+  <div class="filtros">
+    <label class="muted" style="font-size:12.5px;">Em dia até
+      <select id="f-cob">
+        <option value="15">15 dias</option>
+        <option value="30" selected>30 dias</option>
+        <option value="45">45 dias</option>
+        <option value="60">60 dias</option>
+      </select>
+    </label>
+    <label class="muted" style="font-size:12.5px;">Meta de cobertura
+      <select id="f-lim">
+        <option value="50">50%</option>
+        <option value="60" selected>60%</option>
+        <option value="70">70%</option>
+        <option value="80">80%</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="grid cols-4" style="margin:6px 0 16px;">
+    <div class="card kpi-card"><div class="label">Cobertura (clientes)</div><div class="valor" id="k-cob">—</div><div class="yoy" id="k-cob-sub"></div></div>
+    <div class="card kpi-card"><div class="label">Cobertura (valor)</div><div class="valor sm" id="k-cobv">—</div></div>
+    <div class="card kpi-card"><div class="label">Receita em risco</div><div class="valor sm" id="k-risco">—</div></div>
+    <div class="card kpi-card"><div class="label">Base morta (91+ dias)</div><div class="valor sm" id="k-morta">—</div></div>
+  </div>
+
+  <h3 style="margin:0 0 8px;">Distribuição da carteira por recência (clientes)</h3>
+  <div id="faixas" class="faixa-bar"></div>
+  <div id="faixas-leg" class="faixa-leg"></div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div id="alerta" class="demo-note" style="display:none;margin-bottom:12px;"></div>
+  <table class="data">
+    <thead><tr>
+      <th>Nível</th><th class="num">Clientes</th><th class="num">Em dia</th>
+      <th class="num">Cobertura</th><th class="num">No ciclo</th><th class="num">Receita em risco</th><th class="num">Base morta</th>
+    </tr></thead>
+    <tbody id="rows"><tr><td colspan="7" class="loading"><span class="spin"></span></td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FAIXA_COR = {'0-15':'#34d399','16-30':'#2dd4bf','31-45':'#f0a830','46-60':'#fb923c','61-90':'#f97316','91+':'#f87171'};
+let LIM = 60;
+
+function pctTag(fr){
+  const p = (fr*100);
+  const cls = p < LIM ? 'urgente' : (p < LIM+15 ? 'atencao' : 'ok');
+  return `<span class="tag ${cls}">${PCT(p)}</span>`;
+}
+
+function linha(nivel, g, tipo, opts={}){
+  const ind = opts.child ? 'style="padding-left:28px;" class="muted"' : '';
+  const nome = opts.child ? `↳ ${g.nome}` : g.nome;
+  const clicavel = tipo==='time' ? `class="clickable" data-time="${g.id}"` : '';
+  return `<tr ${clicavel} data-nivel="${nivel}">
+    <td ${ind}><b>${nome}</b>${g.amostra_pequena?' <span class="muted" style="font-size:11px;">(amostra pequena)</span>':''}</td>
+    <td class="num">${NUM(g.total_clientes)}</td>
+    <td class="num">${NUM(g.clientes_cobertos)}</td>
+    <td class="num">${pctTag(g.cobertura_clientes)}</td>
+    <td class="num">${PCT(g.cobertura_ciclo*100)}</td>
+    <td class="num">${BRLc(g.receita_em_risco)}</td>
+    <td class="num">${NUM(g.base_morta)}</td></tr>`;
+}
+
+let DADOS=null;
+function render(){
+  const d = DADOS;
+  const e = d.empresa;
+  document.getElementById('k-cob').innerHTML = pctTag(e.cobertura_clientes);
+  document.getElementById('k-cob-sub').textContent = `${NUM(e.clientes_cobertos)} de ${NUM(e.total_clientes)} clientes`;
+  document.getElementById('k-cobv').textContent = PCT(e.cobertura_valor*100);
+  document.getElementById('k-risco').textContent = BRLc(e.receita_em_risco);
+  document.getElementById('k-morta').textContent = NUM(e.base_morta);
+
+  // barra de faixas (clientes)
+  const tot = e.total_clientes || 1;
+  document.getElementById('faixas').innerHTML = e.buckets.map(b=>
+    b.clientes ? `<div class="faixa-seg" style="flex:${b.clientes};background:${FAIXA_COR[b.faixa]}" title="${b.faixa}d: ${b.clientes} clientes"></div>`:'').join('');
+  document.getElementById('faixas-leg').innerHTML = e.buckets.map(b=>
+    `<span class="faixa-item"><i style="background:${FAIXA_COR[b.faixa]}"></i>${b.faixa}d · ${NUM(b.clientes)} (${PCT(b.pct_clientes*100)})</span>`).join('');
+
+  // alerta
+  const ab = d.abaixo_do_limiar;
+  const al = document.getElementById('alerta');
+  if(ab.times || ab.vendedores){
+    al.style.display='block';
+    al.innerHTML = `⚠ <b>${ab.times}</b> time(s) e <b>${ab.vendedores}</b> vendedor(es) abaixo da meta de ${LIM}% de cobertura.`;
+  } else { al.style.display='none'; }
+
+  // tabela: empresa + times (expansível → vendedores)
+  let html = linha('EMPRESA', {...e, nome:'Empresa (escopo)'}, 'empresa');
+  d.times.forEach(t=>{ html += linha('TIME', t, 'time'); });
+  document.getElementById('rows').innerHTML = html;
+
+  // drill: clicar num time insere/remove os vendedores dele
+  document.querySelectorAll('#rows tr.clickable').forEach(tr=>{
+    tr.onclick = ()=>{
+      const tid = tr.dataset.time;
+      const abertos = tr.classList.toggle('open');
+      // remove filhos existentes
+      let nxt = tr.nextElementSibling;
+      while(nxt && nxt.dataset.parent===tid){ const r=nxt; nxt=nxt.nextElementSibling; r.remove(); }
+      if(abertos){
+        const vs = d.vendedores.filter(v=>String(v.codsupervisor)===String(tid));
+        const frag = vs.map(v=>linha('RCA', v, 'rca', {child:true})).join('')
+          .replace(/<tr /g, `<tr data-parent="${tid}" `);
+        tr.insertAdjacentHTML('afterend', frag);
+      }
+    };
+  });
+}
+
+async function load(){
+  const cob = document.getElementById('f-cob').value;
+  LIM = parseInt(document.getElementById('f-lim').value,10);
+  DADOS = await api(`/comercial/api/gerencial/cobertura?coberto_dias=${cob}&limiar=${LIM}`);
+  render();
+}
+document.getElementById('f-cob').onchange = load;
+document.getElementById('f-lim').onchange = load;
+load().catch(e=>console.error(e));
+</script>
+<style>
+.faixa-bar{display:flex;height:22px;border-radius:6px;overflow:hidden;gap:2px;background:rgba(255,255,255,.04);}
+.faixa-seg{min-width:3px;}
+.faixa-leg{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:12px;color:var(--text-dim);}
+.faixa-item{display:inline-flex;align-items:center;gap:6px;}
+.faixa-item i{width:11px;height:11px;border-radius:3px;display:inline-block;}
+#rows tr.clickable{cursor:pointer;}
+#rows tr.clickable.open{background:rgba(255,255,255,.03);}
+</style>
+{% endblock %}

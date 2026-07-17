@@ -55,6 +55,25 @@ FORNECEDORES = [
     'Aurora Bebidas', 'Campo Verde Matinais', 'IndClean Profissional',
 ]
 
+# Bases de produto por departamento (grão do Radar). Combinadas com marca+tamanho
+# geram um catálogo determinístico de ~180 SKUs fictícios.
+PROD_BASE = {
+    1:  ['Detergente', 'Desinfetante', 'Água Sanitária', 'Sabão em Pó', 'Multiuso', 'Amaciante'],
+    2:  ['Arroz', 'Feijão', 'Açúcar', 'Óleo de Soja', 'Macarrão', 'Farinha'],
+    3:  ['Refrigerante', 'Suco', 'Água Mineral', 'Energético', 'Néctar', 'Isotônico'],
+    4:  ['Caixa Papelão', 'Filme Stretch', 'Fita Adesiva', 'Saco Kraft', 'Bandeja', 'Pote PP'],
+    5:  ['Sabonete', 'Shampoo', 'Creme Dental', 'Papel Higiênico', 'Desodorante', 'Condicionador'],
+    6:  ['Copo Descartável', 'Prato Descartável', 'Talher Plástico', 'Guardanapo', 'Marmitex', 'Canudo'],
+    7:  ['Vassoura', 'Balde', 'Pano de Chão', 'Rodo', 'Esponja', 'Luva'],
+    8:  ['Ração Cão', 'Ração Gato', 'Areia Higiênica', 'Petisco', 'Shampoo Pet', 'Tapete Higiênico'],
+    9:  ['Bobina Picotada', 'Sacola Alça', 'Saco Lixo', 'Bobina Kraft', 'Saco Freezer', 'Filme PVC'],
+    10: ['Milho Verde', 'Ervilha', 'Sardinha', 'Atum', 'Seleta Legumes', 'Molho de Tomate'],
+    11: ['Café', 'Achocolatado', 'Biscoito', 'Leite em Pó', 'Cereal', 'Aveia'],
+    12: ['Detergente Industrial', 'Desengraxante', 'Álcool 70', 'Cloro Ativo', 'Limpa Piso', 'Sabão de Coco'],
+}
+MARCAS_PROD = ['Prime', 'Max', 'Gold', 'Popular', 'Extra', 'Super', 'Nobre', 'Real']
+TAM_PROD = ['500ml', '1L', '2L', '5L', '1kg', '2kg', '5kg', 'fardo', 'pct 12', 'cx 24']
+
 PRE_NOMES = ['Comercial', 'Distribuidora', 'Mercado', 'Atacado', 'Supermercado',
              'Armazém', 'Empório', 'Casa', 'Depósito', 'Mini Mercado']
 SOBRE_NOMES = ['Aliança', 'Progresso', 'União', 'Estrela', 'Boa Compra', 'Central',
@@ -127,6 +146,29 @@ def gerar_comercial(n_clientes=720):
             'codsupervisor': sup, 'cidade': cid, 'estado': uf, 'bloqueio': 'N',
         })
 
+    # fornecedores (codfornec 200..) — precisam existir antes do catálogo de produtos
+    fornecedores = [{'codfornec': 200 + i, 'nome': n} for i, n in enumerate(FORNECEDORES)]
+    fornec_nome_por_cod = {f['codfornec']: f['nome'] for f in fornecedores}
+    fornec_cods = list(fornec_nome_por_cod)
+
+    # catálogo de produtos (determinístico) — grão do Radar
+    produtos = []
+    produtos_por_depto = {}
+    codprod = 5000
+    for codepto in DEPTOS:
+        for base in PROD_BASE.get(codepto, [DEPTOS[codepto]]):
+            for _ in range(RNG.randint(2, 3)):
+                cf = RNG.choice(fornec_cods)
+                produtos.append({
+                    'codprod': codprod,
+                    'descricao': f"{base} {RNG.choice(MARCAS_PROD)} {RNG.choice(TAM_PROD)}",
+                    'codepto': codepto,
+                    'codfornec': cf,
+                    'fornec_nome': fornec_nome_por_cod[cf],
+                })
+                produtos_por_depto.setdefault(codepto, []).append(codprod)
+                codprod += 1
+
     pesos = [a[1] for a in ARQ]
     clientes = []
     for i in range(n_clientes):
@@ -156,6 +198,7 @@ def gerar_comercial(n_clientes=720):
 
         mensal = {}
         deptos_cli = {}
+        produtos_cli = {}
         for dt in datas:
             base_val = ticket * RNG.uniform(0.6, 1.5) * _fator_temporal(dt)
             venda = round(base_val, 2)
@@ -170,6 +213,16 @@ def gerar_comercial(n_clientes=720):
                 share = venda / 2
                 dd['venda'] += round(share, 2)
                 dd['lucro'] += round(share * MARGEM, 2)
+                # produtos do depto nesta compra (1-2 SKUs) — grão do Radar.
+                # Rateia a fatia do depto entre os SKUs; guarda evento (data, venda, qt).
+                skus = produtos_por_depto.get(cod, [])
+                if skus:
+                    escolhidos = RNG.sample(skus, k=min(len(skus), RNG.randint(1, 2)))
+                    vshare = share / len(escolhidos)
+                    for cp in escolhidos:
+                        qt = max(1, int(vshare / RNG.uniform(12, 60)))
+                        produtos_cli.setdefault(cp, []).append(
+                            [dt.isoformat(), round(vshare, 2), qt])
 
         # snapshot derivado (janela 12m)
         corte12 = HOJE - timedelta(days=365)
@@ -202,6 +255,7 @@ def gerar_comercial(n_clientes=720):
                        for am, v in sorted(mensal.items())},
             'deptos': {str(c): {'venda': round(v['venda'], 2), 'lucro': round(v['lucro'], 2)}
                        for c, v in deptos_cli.items()},
+            'produtos': {str(cp): ev for cp, ev in produtos_cli.items()},
         })
 
     # série agregada 24m
@@ -225,8 +279,9 @@ def gerar_comercial(n_clientes=720):
             'ClientesUnicos': len(s['clientes']),
         })
 
-    fornecedores = [{'codfornec': 200 + i, 'nome': n} for i, n in enumerate(FORNECEDORES)]
-
+    # A meta de cada métrica é derivada em tempo de request (mesmo mês do ano anterior ×
+    # crescimento, medida no grão certo) por comercial/loaders_demo.py — o mês de
+    # referência é o corrente. Aqui só ancoramos esse mês.
     out = {
         'gerado_em': HOJE.isoformat(),
         'anchor': HOJE.isoformat(),
@@ -235,12 +290,14 @@ def gerar_comercial(n_clientes=720):
         'vendedores': vendedores,
         'deptos': {str(k): v for k, v in DEPTOS.items()},
         'fornecedores': fornecedores,
+        'produtos': produtos,
         'clientes': clientes,
         'serie_agregada': serie_agregada,
+        'metas_mes': HOJE.strftime('%Y-%m'),
     }
     COMERCIAL_JSON.write_text(json.dumps(out, ensure_ascii=False), encoding='utf-8')
     print(f"[comercial] {len(clientes)} clientes, {len(vendedores)} vendedores, "
-          f"{len(serie_agregada)} meses → {COMERCIAL_JSON.name}")
+          f"{len(produtos)} produtos, {len(serie_agregada)} meses → {COMERCIAL_JSON.name}")
 
 
 # ───────────────────────── logística (SQLite) ─────────────────────────

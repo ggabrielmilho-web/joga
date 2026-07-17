@@ -1,0 +1,112 @@
+{% extends "_shell.html" %}
+{% block title %}Radar de Produtos{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Radar de Produtos</h1>
+  <p class="desc">Produtos que mais perderam receita (janela recente vs. anterior). Clique num produto para ver quem parou ou trocou.</p>
+</div>
+
+<div class="card">
+  <div class="filtros">
+    <select id="f-dias">
+      <option value="30">30 dias</option>
+      <option value="60" selected>60 dias</option>
+      <option value="90">90 dias</option>
+      <option value="180">180 dias</option>
+    </select>
+    <select id="f-fornec"><option value="">Todos os fornecedores</option></select>
+    <select id="f-ord">
+      <option value="queda_receita" selected>Ordenar: Receita em risco</option>
+      <option value="clientes_perdidos">Ordenar: Clientes perdidos</option>
+      <option value="pct_queda">Ordenar: % de queda</option>
+    </select>
+    <input id="f-busca" placeholder="🔍 produto…">
+  </div>
+  <div class="grid cols-3" style="margin-bottom:16px;">
+    <div class="card kpi-card"><div class="label">Produtos sangrando</div><div class="valor sm" id="k-prod">—</div></div>
+    <div class="card kpi-card"><div class="label">Receita total em risco</div><div class="valor sm" id="k-risco">—</div></div>
+    <div class="card kpi-card"><div class="label">Clientes perdidos (soma)</div><div class="valor sm" id="k-cli">—</div></div>
+  </div>
+  <table class="data">
+    <thead><tr><th>#</th><th>Produto</th><th>Departamento</th><th>Fornecedor</th>
+      <th class="num">Receita em risco</th><th class="num">% queda</th><th class="num">Clientes perdidos</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="7" class="loading"><span class="spin"></span></td></tr></tbody>
+  </table>
+</div>
+
+<div class="backdrop" id="bk" onclick="fecha()"></div>
+<div class="side-panel" id="panel"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ST_LABEL = {ativo:'Comprando', esfriando:'Esfriando', parou:'Parou', perdido:'Perdido'};
+const ST_TAG   = {ativo:'ok', esfriando:'atencao', parou:'urgente', perdido:'urgente'};
+let ROWS = [];
+
+async function fornecs(){
+  const d = await api('/comercial/api/radar/fornecedores');
+  const sel = document.getElementById('f-fornec');
+  d.fornecedores.forEach(f=>sel.innerHTML += `<option value="${f.codfornec}">${f.nome}</option>`);
+}
+
+function pinta(){
+  const ord = document.getElementById('f-ord').value;
+  const b = document.getElementById('f-busca').value.trim().toLowerCase();
+  let rows = ROWS.slice().sort((x,y)=>(y[ord]||0)-(x[ord]||0));
+  if(b) rows = rows.filter(r=>r.descricao.toLowerCase().includes(b));
+  document.getElementById('k-prod').textContent = NUM(rows.length);
+  document.getElementById('k-risco').textContent = BRLc(rows.reduce((s,r)=>s+r.queda_receita,0));
+  document.getElementById('k-cli').textContent = NUM(rows.reduce((s,r)=>s+r.clientes_perdidos,0));
+  document.getElementById('rows').innerHTML = rows.map((r,i)=>
+    `<tr class="clickable" onclick="abrir(${r.codprod})">
+      <td class="muted">${i+1}</td>
+      <td><b>${r.descricao}</b></td>
+      <td>${r.depto_nome||'—'}</td>
+      <td class="muted">${r.fornec_nome||'—'}</td>
+      <td class="num">${BRLc(r.queda_receita)}</td>
+      <td class="num"><span class="tag ${r.pct_queda>0.5?'urgente':'atencao'}">${r.pct_queda!=null?PCT(r.pct_queda*100):'—'}</span></td>
+      <td class="num">${NUM(r.clientes_perdidos)}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="loading">Nenhum produto sangrando neste filtro.</td></tr>';
+}
+
+async function load(){
+  const dias = document.getElementById('f-dias').value;
+  const fornec = document.getElementById('f-fornec').value;
+  const d = await api(`/comercial/api/radar/board?dias=${dias}${fornec?'&fornecedor='+fornec:''}`);
+  ROWS = d.rows;
+  pinta();
+}
+
+async function abrir(codprod){
+  const dias = document.getElementById('f-dias').value;
+  const d = await api(`/comercial/api/radar/produto/${codprod}?dias=${dias}`);
+  const p = d.produto, k = d.kpis;
+  const linhas = d.rows.map(c=>
+    `<tr><td>${c.cliente}</td><td class="muted">${c.cidade||''}/${c.uf||''}</td>
+      <td class="num"><span class="tag ${ST_TAG[c.status]}">${ST_LABEL[c.status]}${c.trocou?' · trocou':''}</span></td>
+      <td class="num">${c.dias_parado!=null?c.dias_parado+'d':'—'}</td>
+      <td class="num">${BRLc(c.venda_12m)}</td></tr>`).join('');
+  document.getElementById('panel').innerHTML = `
+    <span class="fechar" onclick="fecha()">×</span>
+    <h2 style="margin:0 0 2px;">${p.descricao}</h2>
+    <p class="muted" style="margin:0 0 14px;">${p.depto_nome||'—'} · ${p.fornec_nome||'—'}</p>
+    <div class="grid cols-2" style="gap:10px;margin-bottom:14px;">
+      <div class="card kpi-card"><div class="label">Clientes</div><div class="valor sm">${NUM(k.clientes)}</div></div>
+      <div class="card kpi-card"><div class="label">Pararam</div><div class="valor sm">${NUM(k.parados)}</div></div>
+      <div class="card kpi-card"><div class="label">Trocaram</div><div class="valor sm">${NUM(k.trocaram)}</div></div>
+      <div class="card kpi-card"><div class="label">Receita em risco</div><div class="valor sm">${BRLc(k.receita_em_risco)}</div></div>
+    </div>
+    <table class="data"><thead><tr><th>Cliente</th><th>Cidade/UF</th><th class="num">Situação</th>
+      <th class="num">Parado</th><th class="num">Venda 12m</th></tr></thead>
+      <tbody>${linhas||'<tr><td colspan="5" class="loading">Sem clientes no escopo.</td></tr>'}</tbody></table>`;
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('bk').classList.add('open');
+}
+function fecha(){ document.getElementById('panel').classList.remove('open'); document.getElementById('bk').classList.remove('open'); }
+
+['f-dias','f-fornec'].forEach(id=>document.getElementById(id).onchange=load);
+['f-ord','f-busca'].forEach(id=>document.getElementById(id).oninput=pinta);
+fornecs().then(load).catch(e=>console.error(e));
+</script>
+{% endblock %}

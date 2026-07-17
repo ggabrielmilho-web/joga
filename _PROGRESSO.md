@@ -42,6 +42,30 @@ Refeito com a **estrutura contábil obrigatória** (espelha `DRE_LINHAS` do Tabe
 
 Resultado E2E: Receita R$18,3M · EBITDA 13,6% · Lucro Líquido 7,6% · **Resultado Final 3,0%**. **60/60 testes verdes.**
 
+## Patch — Comercial completo (3 abas do Multpel replicadas)
+
+Objetivo: fechar a defasagem entre a navegação do Multpel (11 abas) e a do JOGA (7),
+replicando **Metas, Gerencial (Cobertura) e Radar de Produtos** (Admin descartada — toca auth
+real, pouco útil na demo). Telas próprias, sobre o dataset sintético, reusando os módulos puros.
+
+- **Seed estendido** (`data/seed_demo.py`): catálogo de **181 produtos** (`produtos`) + histórico
+  por SKU em cada cliente (`clientes[].produtos = {codprod: [[iso, venda, qt], ...]}`) — grão do
+  Radar. Determinístico (RNG 42, sem alterar os draws antigos). `metas_mes` ancora o mês de referência.
+- **Gerencial** (`comercial/cobertura.py` portado verbatim + `cobertura_niveis` + `/gerencial`):
+  placar Empresa→Time→Vendedor de % em dia (≤ janela), faixas de recência, receita em risco, alerta
+  de limiar. E2E: empresa 46,7% cobertura, base morta 281, faixas somam 720.
+- **Radar** (`comercial/radar.py` puro + loaders + `/radar`): produtos sangrando (janela recente ×
+  anterior), drill por produto → clientes parou/perdido/esfriando + troca-vs-abandono. E2E: 110
+  produtos sangrando @60d; drill do top com status coerente.
+- **Metas** (`comercial/metas.py` copiado + loaders + `/metas`): 4 métricas (Venda/Rentab/Clientes/Mix)
+  meta × realizado × projeção/necessidade em **dias úteis**, drill de vendedores, série diária.
+  **Meta calculada no grão certo** (mesmo mês do ano anterior × crescimento, distinct-aware p/
+  clientes/mix) — evita estourar o DISTINCTCOUNT no rollup. E2E: 4 métricas ~96–103% no total.
+- **Nav** (`_shell.html`): + Radar, Metas, Gerencial (sob `/comercial/*`).
+- **Testes**: +31 (test_cobertura/test_metas/test_radar + smoke/RBAC das 3 abas). **91/91 verdes.**
+- **RBAC** validado ao vivo: Gerencial 720→164→33, Metas 5→1→1 times, Radar 110→90→64;
+  drill de metas de time alheio → 403.
+
 ## Decisões / desvios
 
 1. **Telas novas (não reaproveitamento 1:1 dos frontends originais)** — para máxima confiabilidade ao vivo e identidade visual própria. O Multpel (sem contrato) inspirou a lógica; o Tabela Auditoria (com contrato) NÃO teve código/visual copiado — a logística é toda sintética e com telas próprias.

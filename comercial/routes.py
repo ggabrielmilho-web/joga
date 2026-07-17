@@ -67,6 +67,24 @@ def mix_page():
     return render_template('comercial/mix.html', active='mix')
 
 
+@comercial_bp.route('/gerencial')
+@login_required
+def gerencial_page():
+    return render_template('comercial/gerencial.html', active='gerencial')
+
+
+@comercial_bp.route('/radar')
+@login_required
+def radar_page():
+    return render_template('comercial/radar.html', active='radar')
+
+
+@comercial_bp.route('/metas')
+@login_required
+def metas_page():
+    return render_template('comercial/metas.html', active='metas')
+
+
 # ──────────────────────────── dashboard API ────────────────────────────
 @comercial_bp.route('/api/dashboard/kpis')
 @login_required
@@ -311,6 +329,107 @@ def api_mix():
     codepto = request.args.get('codepto')
     rows = L.mix_abandonado(dias, codepto, 100)
     return jsonify({'ok': True, 'dias': dias, 'total': len(rows), 'rows': rows})
+
+
+# ──────────────────────────── gerencial / cobertura ────────────────────────────
+def _coberto_dias_arg():
+    try:
+        return max(7, min(int(request.args.get('coberto_dias', 30)), 180))
+    except (TypeError, ValueError):
+        return 30
+
+
+@comercial_bp.route('/api/gerencial/cobertura')
+@login_required
+def api_gerencial_cobertura():
+    """Placar em 3 níveis (empresa/times/vendedores) sobre a carteira no escopo do usuário.
+    O front faz o drill in-memory a partir deste payload único."""
+    coberto_dias = _coberto_dias_arg()
+    try:
+        limiar_pct = max(0, min(int(request.args.get('limiar', 60)), 100))
+    except (TypeError, ValueError):
+        limiar_pct = 60
+    niveis = L.cobertura_niveis(coberto_dias)
+    from . import cobertura
+    baixos = cobertura.times_rcas_abaixo(niveis, limiar_pct)
+    return jsonify({
+        'ok': True,
+        'limiar_pct': limiar_pct,
+        'abaixo_do_limiar': {
+            'times': len(baixos['times']),
+            'vendedores': len(baixos['vendedores']),
+        },
+        **niveis,
+    })
+
+
+# ──────────────────────────── radar de produtos ────────────────────────────
+@comercial_bp.route('/api/radar/board')
+@login_required
+def api_radar_board():
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+    fornecedor = request.args.get('fornecedor')
+    rows = L.radar_board(dias, fornecedor)
+    return jsonify({'ok': True, 'dias': dias, 'total': len(rows), 'rows': rows})
+
+
+@comercial_bp.route('/api/radar/produto/<int:codprod>')
+@login_required
+def api_radar_produto(codprod):
+    try:
+        dias = max(7, min(int(request.args.get('dias', 60)), 365))
+    except (TypeError, ValueError):
+        dias = 60
+    dados = L.radar_produto(codprod, dias)
+    if not dados:
+        abort(404)
+    return jsonify(dados)
+
+
+@comercial_bp.route('/api/radar/fornecedores')
+@login_required
+def api_radar_fornecedores():
+    return jsonify({'ok': True, 'fornecedores': L.radar_fornecedores()})
+
+
+# ──────────────────────────── metas ────────────────────────────
+def _metas_ano_mes():
+    ano = request.args.get('ano')
+    mes = request.args.get('mes')
+    try:
+        ano = int(ano) if ano else None
+        mes = int(mes) if mes else None
+    except (TypeError, ValueError):
+        ano = mes = None
+    return ano, mes
+
+
+@comercial_bp.route('/api/metas')
+@login_required
+def api_metas():
+    ano, mes = _metas_ano_mes()
+    return jsonify(L.metas_painel(ano, mes))
+
+
+@comercial_bp.route('/api/metas/vendedores')
+@login_required
+def api_metas_vendedores():
+    ano, mes = _metas_ano_mes()
+    codsup = request.args.get('codsupervisor')
+    dados = L.metas_vendedores(codsup, ano, mes)
+    if dados is None:
+        return jsonify({'ok': False, 'error': 'Acesso negado'}), 403
+    return jsonify(dados)
+
+
+@comercial_bp.route('/api/metas/serie')
+@login_required
+def api_metas_serie():
+    ano, mes = _metas_ano_mes()
+    return jsonify(L.metas_serie(ano, mes))
 
 
 # ──────────────────────────── internos ────────────────────────────

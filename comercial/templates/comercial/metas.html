@@ -1,0 +1,148 @@
+{% extends "_shell.html" %}
+{% block title %}Metas{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Metas do Mês</h1>
+  <p class="desc">Meta × realizado × projeção por time e vendedor. Projeção e necessidade/dia em <b>dias úteis</b>.</p>
+</div>
+
+<div class="card">
+  <div class="filtros">
+    <div id="tabs" class="metric-tabs">
+      <button class="mt on" data-m="venda">Venda</button>
+      <button class="mt" data-m="rentabilidade">Rentabilidade</button>
+      <button class="mt" data-m="clientes">Clientes</button>
+      <button class="mt" data-m="mix">Mix</button>
+    </div>
+    <span class="muted" id="periodo" style="font-size:12.5px;margin-left:auto;"></span>
+  </div>
+
+  <div class="grid cols-4" style="margin:6px 0 16px;">
+    <div class="card kpi-card"><div class="label">Meta</div><div class="valor sm" id="k-meta">—</div></div>
+    <div class="card kpi-card"><div class="label">Realizado</div><div class="valor sm" id="k-real">—</div><div class="yoy" id="k-real-pct"></div></div>
+    <div class="card kpi-card"><div class="label">Projeção (fim do mês)</div><div class="valor sm" id="k-proj">—</div><div class="yoy" id="k-proj-pct"></div></div>
+    <div class="card kpi-card"><div class="label">Necessidade / dia útil</div><div class="valor sm" id="k-nec">—</div><div class="yoy muted" id="k-dias"></div></div>
+  </div>
+  <div class="prog"><div class="prog-fill" id="prog"></div><div class="prog-goal"></div></div>
+</div>
+
+<div class="grid cols-2" style="margin-top:16px;">
+  <div class="card chart-card"><h3>Venda acumulada no mês vs. meta</h3><div class="chart-wrap"><canvas id="serie"></canvas></div></div>
+  <div class="card">
+    <h3 style="margin:0 0 8px;">Times</h3>
+    <table class="data">
+      <thead><tr><th>Time</th><th class="num">Meta</th><th class="num">Realizado</th><th class="num">%</th><th class="num">Projeção</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="loading"><span class="spin"></span></td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="backdrop" id="bk" onclick="fecha()"></div>
+<div class="side-panel" id="panel"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let METRICA = 'venda', PAINEL = null;
+const isMoeda = m => (m==='venda' || m==='rentabilidade');
+const fmt = (m,v) => isMoeda(m) ? BRLc(v) : NUM(Math.round(v||0));
+function pctColor(fr){ return fr==null?'':(fr>=1?'up':(fr>=0.85?'':'down')); }
+
+function pintaKPIs(){
+  const l = PAINEL.total[METRICA];
+  document.getElementById('k-meta').textContent = fmt(METRICA, l.meta);
+  document.getElementById('k-real').textContent = fmt(METRICA, l.realizado);
+  const pr = l.pct_realizado;
+  document.getElementById('k-real-pct').innerHTML = pr==null?'':`<span class="${pctColor(pr)}">${PCT(pr*100)} da meta</span>`;
+  document.getElementById('k-proj').textContent = fmt(METRICA, l.projecao);
+  const pp = l.pct_projecao;
+  document.getElementById('k-proj-pct').innerHTML = pp==null?'':`<span class="${pctColor(pp)}">${PCT(pp*100)} da meta</span>`;
+  document.getElementById('k-nec').textContent = fmt(METRICA, l.necessidade_dia);
+  const d = PAINEL.dias;
+  document.getElementById('k-dias').textContent = `${d.restantes} dias úteis restantes`;
+  const fr = Math.max(0, Math.min(1, pr||0));
+  document.getElementById('prog').style.width = (fr*100).toFixed(1)+'%';
+  document.getElementById('prog').className = 'prog-fill ' + (pr>=1?'ok':(pr>=0.85?'warn':'bad'));
+}
+
+function pintaTimes(){
+  const rows = PAINEL.times;
+  document.getElementById('rows').innerHTML = rows.map(t=>{
+    const l = t[METRICA]; const pr=l.pct_realizado;
+    const cls = pr==null?'':(pr>=1?'ok':(pr>=0.85?'atencao':'urgente'));
+    return `<tr class="clickable" onclick="drill(${t.codsupervisor})">
+      <td><b>${t.nome}</b></td>
+      <td class="num">${fmt(METRICA,l.meta)}</td>
+      <td class="num">${fmt(METRICA,l.realizado)}</td>
+      <td class="num"><span class="tag ${cls}">${pr!=null?PCT(pr*100):'—'}</span></td>
+      <td class="num">${fmt(METRICA,l.projecao)}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="loading">Sem times no escopo.</td></tr>';
+}
+
+let CH=null;
+function pintaSerie(s){
+  const labels = s.rows.map(r=>r.dia.slice(8)+'/'+r.dia.slice(5,7));
+  const acum = s.rows.map(r=>r.acumulado);
+  const meta = s.rows.map(()=>s.meta_venda);
+  if(CH) CH.destroy();
+  CH = new Chart(document.getElementById('serie'),{
+    data:{labels, datasets:[
+      {type:'line',label:'Realizado acum.',data:acum,borderColor:CSS('--accent'),backgroundColor:'rgba(240,168,48,.12)',fill:true,tension:.25,pointRadius:0},
+      {type:'line',label:'Meta',data:meta,borderColor:CSS('--accent2'),borderDash:[6,5],pointRadius:0}
+    ]},
+    options:{maintainAspectRatio:false,plugins:{legend:{display:true}},
+      scales:{y:{ticks:{callback:v=>'R$ '+(v/1000).toFixed(0)+'k'}}}}});
+}
+
+async function drill(codsup){
+  const q = qs();
+  const d = await api(`/comercial/api/metas/vendedores?codsupervisor=${codsup}${q}`);
+  if(!d || !d.ok){ return; }
+  const linhas = d.vendedores.map(v=>{
+    const l=v[METRICA]; const pr=l.pct_realizado;
+    const cls = pr==null?'':(pr>=1?'ok':(pr>=0.85?'atencao':'urgente'));
+    return `<tr><td>${v.nome}</td><td class="num">${fmt(METRICA,l.meta)}</td>
+      <td class="num">${fmt(METRICA,l.realizado)}</td>
+      <td class="num"><span class="tag ${cls}">${pr!=null?PCT(pr*100):'—'}</span></td>
+      <td class="num">${fmt(METRICA,l.necessidade_dia)}</td></tr>`;
+  }).join('');
+  const time = PAINEL.times.find(t=>t.codsupervisor===codsup);
+  document.getElementById('panel').innerHTML = `
+    <span class="fechar" onclick="fecha()">×</span>
+    <h2 style="margin:0 0 2px;">${time?time.nome:'Time '+codsup}</h2>
+    <p class="muted" style="margin:0 0 14px;">Métrica: ${document.querySelector('.mt.on').textContent} · ${PAINEL.dias.restantes} dias úteis restantes</p>
+    <table class="data"><thead><tr><th>Vendedor</th><th class="num">Meta</th><th class="num">Realizado</th>
+      <th class="num">%</th><th class="num">Nec./dia</th></tr></thead>
+      <tbody>${linhas||'<tr><td colspan="5" class="loading">Sem vendedores.</td></tr>'}</tbody></table>`;
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('bk').classList.add('open');
+}
+function fecha(){ document.getElementById('panel').classList.remove('open'); document.getElementById('bk').classList.remove('open'); }
+
+function qs(){ return ''; }  // período padrão (mês corrente do dataset)
+
+document.querySelectorAll('.mt').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.mt').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); METRICA = b.dataset.m;
+  pintaKPIs(); pintaTimes();
+});
+
+async function load(){
+  PAINEL = await api('/comercial/api/metas');
+  document.getElementById('periodo').textContent =
+    `Referência: ${String(PAINEL.mes).padStart(2,'0')}/${PAINEL.ano} · ${PAINEL.dias.decorridos}/${PAINEL.dias.mes} dias úteis`;
+  pintaKPIs(); pintaTimes();
+  pintaSerie(await api('/comercial/api/metas/serie'));
+}
+load().catch(e=>console.error(e));
+</script>
+<style>
+.metric-tabs{display:flex;gap:6px;}
+.mt{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:var(--text-dim);
+    padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;}
+.mt.on{background:var(--accent);border-color:var(--accent);color:#16171d;}
+.prog{position:relative;height:12px;background:rgba(255,255,255,.06);border-radius:8px;overflow:hidden;}
+.prog-fill{height:100%;border-radius:8px;transition:width .4s;background:var(--accent);}
+.prog-fill.ok{background:var(--green);} .prog-fill.warn{background:var(--yellow);} .prog-fill.bad{background:var(--orange);}
+</style>
+{% endblock %}

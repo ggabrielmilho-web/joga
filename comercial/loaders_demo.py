@@ -12,6 +12,9 @@ import config
 from shared.auth import rbac_scope
 from . import rfm
 from . import cohort
+from . import cobertura
+from . import radar
+from . import metas as metas_mod
 
 VENDEDORES_TECNICOS = {999, 900, 4, 272}
 
@@ -422,3 +425,263 @@ def mix_abandonado(dias=60, codepto=None, limit=100):
             })
     out.sort(key=lambda x: -x['venda_cat_12m'])
     return out[:limit]
+
+
+# ───────────────────────── gerencial / cobertura ─────────────────────────
+def cobertura_niveis(coberto_dias=30):
+    """Placar de cobertura (empresa/times/vendedores) sobre a carteira no escopo RBAC."""
+    return cobertura.agregar_niveis(carteira_full(), coberto_dias=coberto_dias)
+
+
+# ───────────────────────── radar de produtos ─────────────────────────
+def produtos_map():
+    """{str(codprod): {codprod, descricao, codepto, codfornec, fornec_nome, depto_nome}}"""
+    ds = _dataset()
+    dmap = ds['deptos']
+    return {str(p['codprod']): {**p, 'depto_nome': dmap.get(str(p['codepto']))}
+            for p in ds.get('produtos', [])}
+
+
+def _clientes_radar():
+    """Clientes no escopo RBAC com meta + histórico por produto (grão do Radar)."""
+    cart = {c['codcli']: c for c in carteira_full()}
+    out = []
+    for c in _dataset()['clientes']:
+        meta = cart.get(c['codcli'])
+        if not meta:
+            continue
+        out.append({
+            'codcli': c['codcli'], 'cliente': meta.get('cliente'),
+            'cidade': meta.get('cidade'), 'uf': meta.get('uf'),
+            'vendedor': meta.get('vendedor'), 'codusur': meta.get('codusur'),
+            'telefone': meta.get('telefone'), 'produtos': c.get('produtos', {}),
+        })
+    return out
+
+
+def radar_board(dias=60, fornecedor=None):
+    rows = radar.board(_clientes_radar(), produtos_map(), dias, anchor())
+    if fornecedor:
+        try:
+            cf = int(fornecedor)
+        except (TypeError, ValueError):
+            cf = None
+        if cf is not None:
+            rows = [r for r in rows if r.get('codfornec') == cf]
+    return rows
+
+
+def radar_produto(codprod, dias=60):
+    pm = produtos_map()
+    if str(codprod) not in pm:
+        return None
+    info, linhas = radar.detalhe(_clientes_radar(), pm, codprod, dias, anchor())
+    parados = [c for c in linhas if c['status'] in ('parou', 'perdido')]
+    return {
+        'ok': True, 'codprod': codprod, 'dias': dias,
+        'produto': {
+            'codprod': codprod,
+            'descricao': info.get('descricao') or f'Produto {codprod}',
+            'codepto': info.get('codepto'),
+            'depto_nome': info.get('depto_nome'),
+            'fornec_nome': info.get('fornec_nome'),
+        },
+        'kpis': {
+            'clientes': len(linhas),
+            'parados': len(parados),
+            'esfriou_ou_parou': sum(1 for c in linhas if c['status'] in ('esfriando', 'parou', 'perdido')),
+            'trocaram': sum(1 for c in parados if c['trocou']),
+            'receita_em_risco': round(sum(c['venda_12m'] for c in parados), 2),
+        },
+        'rows': linhas,
+    }
+
+
+def radar_fornecedores():
+    seen = {}
+    for p in _dataset().get('produtos', []):
+        seen[p['codfornec']] = p.get('fornec_nome')
+    return [{'codfornec': k, 'nome': v} for k, v in sorted(seen.items())]
+
+
+# ───────────────────────── metas ─────────────────────────
+def _dias_uteis(ano, mes, anchor_d):
+    """(dias_uteis_mes, decorridos, restantes) em dias úteis (seg-sex), relativo ao anchor.
+    Mês no passado → tudo decorrido; no futuro → nada decorrido; corrente → até o anchor."""
+    prim = date(ano, mes, 1)
+    prox = date(ano + (mes == 12), (mes % 12) + 1, 1)
+    dias_mes = sum(1 for i in range((prox - prim).days)
+                   if (prim + timedelta(days=i)).weekday() < 5)
+    if (ano, mes) < (anchor_d.year, anchor_d.month):
+        return dias_mes, dias_mes, 0
+    if (ano, mes) > (anchor_d.year, anchor_d.month):
+        return dias_mes, 0, dias_mes
+    decorridos = sum(1 for i in range(anchor_d.day)
+                     if (prim + timedelta(days=i)).weekday() < 5)
+    return dias_mes, decorridos, max(0, dias_mes - decorridos)
+
+
+def _metas_scope_codusur():
+    """Conjunto de codusur (str) permitido pelo RBAC. None = todos."""
+    codusur, codsup = rbac_scope()
+    vmap = vendedores_map()
+    if codusur is not None:
+        return {str(codusur)}
+    if codsup is not None:
+        return {k for k, v in vmap.items() if str(v['codsupervisor']) == str(codsup)}
+    return None
+
+
+def _metas_ano_mes(ano, mes):
+    if ano and mes:
+        return int(ano), int(mes)
+    am = _dataset().get('metas_mes') or anchor().strftime('%Y-%m')
+    y, m = am.split('-')
+    return int(y), int(m)
+
+
+def _metas_realizado(am, scope):
+    """Realizado do mês `am` por vendedor: venda/lucro (aditivos) + sets cli/mix (distinct)."""
+    ds = _dataset()
+    por_vend = {}
+    for c in ds['clientes']:
+        cu = str(c['codusur1'])
+        if scope is not None and cu not in scope:
+            continue
+        v = c['mensal'].get(am)
+        acc = por_vend.setdefault(cu, {'venda': 0.0, 'lucro': 0.0, 'cli': set(), 'mix': set()})
+        if v:
+            acc['venda'] += v['venda']
+            acc['lucro'] += v['lucro']
+            acc['cli'].add(c['codcli'])
+        for cp, evs in c.get('produtos', {}).items():
+            if any(ev[0][:7] == am for ev in evs):
+                acc['mix'].add(cp)
+    return por_vend
+
+
+# Crescimento aplicado sobre o mesmo mês do ano anterior p/ virar meta.
+_META_CRESC = {'venda': 0.10, 'rentabilidade': 0.10, 'clientes': 0.05, 'mix': 0.05}
+_ZERO_GRAO = {'venda': 0.0, 'lucro': 0.0, 'cli': set(), 'mix': set()}
+
+
+def _agg_grao(por_vend, codusurs):
+    """Agrega o dict por-vendedor num grão (time/empresa): venda/lucro aditivos, cli/mix distinct."""
+    g = {'venda': 0.0, 'lucro': 0.0, 'cli': set(), 'mix': set()}
+    for cu in codusurs:
+        r = por_vend.get(cu)
+        if not r:
+            continue
+        g['venda'] += r['venda']
+        g['lucro'] += r['lucro']
+        g['cli'] |= r['cli']
+        g['mix'] |= r['mix']
+    return g
+
+
+def _bloco_metricas(real_g, prev_g, dm, dd, dr):
+    """4 linhas do grão. A META é o mesmo mês do ano anterior × crescimento, medida NO
+    grão (clientes/mix distinct) — nunca soma de metas de vendedor (evita estourar o
+    DISTINCTCOUNT no rollup). O realizado vem medido no mesmo grão."""
+    meta = {
+        'venda':         round(prev_g['venda'] * (1 + _META_CRESC['venda']), 2),
+        'rentabilidade': round(prev_g['lucro'] * (1 + _META_CRESC['rentabilidade']), 2),
+        'clientes':      round(len(prev_g['cli']) * (1 + _META_CRESC['clientes'])),
+        'mix':           round(len(prev_g['mix']) * (1 + _META_CRESC['mix'])),
+    }
+    return {
+        'venda':         metas_mod.linha_metrica(meta['venda'], real_g['venda'], dm, dd, dr),
+        'rentabilidade': metas_mod.linha_metrica(meta['rentabilidade'], real_g['lucro'], dm, dd, dr),
+        'clientes':      metas_mod.linha_metrica(meta['clientes'], len(real_g['cli']), dm, dd, dr),
+        'mix':           metas_mod.linha_metrica(meta['mix'], len(real_g['mix']), dm, dd, dr),
+    }
+
+
+def metas_painel(ano=None, mes=None):
+    ano, mes = _metas_ano_mes(ano, mes)
+    am = f"{ano:04d}-{mes:02d}"
+    am_prev = f"{ano - 1:04d}-{mes:02d}"   # mesmo mês do ano anterior (base da meta)
+    scope = _metas_scope_codusur()
+    dm, dd, dr = _dias_uteis(ano, mes, anchor())
+    vmap = vendedores_map()
+    smap = supervisores_map()
+    real = _metas_realizado(am, scope)
+    prev = _metas_realizado(am_prev, scope)
+
+    # vendedores no escopo, agrupados por time
+    times_cu = {}
+    for cu, v in vmap.items():
+        if scope is not None and cu not in scope:
+            continue
+        times_cu.setdefault(str(v['codsupervisor']), []).append(cu)
+    todos_cu = [cu for cus in times_cu.values() for cu in cus]
+
+    def _bloco(codusurs):
+        return _bloco_metricas(_agg_grao(real, codusurs), _agg_grao(prev, codusurs), dm, dd, dr)
+
+    times = [{'codsupervisor': int(sup), 'nome': smap.get(sup, f'Time {sup}'), **_bloco(cus)}
+             for sup, cus in times_cu.items()]
+    times.sort(key=lambda t: -(t['venda']['realizado']))
+
+    return {
+        'ok': True, 'ano': ano, 'mes': mes, 'anomes': am,
+        'dias': {'mes': dm, 'decorridos': dd, 'restantes': dr},
+        'metricas': list(metas_mod.METRICAS),
+        'total': _bloco(todos_cu),
+        'times': times,
+    }
+
+
+def metas_vendedores(codsupervisor, ano=None, mes=None):
+    ano, mes = _metas_ano_mes(ano, mes)
+    am = f"{ano:04d}-{mes:02d}"
+    am_prev = f"{ano - 1:04d}-{mes:02d}"
+    scope = _metas_scope_codusur()
+    dm, dd, dr = _dias_uteis(ano, mes, anchor())
+    vmap = vendedores_map()
+    real = _metas_realizado(am, scope)
+    prev = _metas_realizado(am_prev, scope)
+
+    alvos_cu = [cu for cu, v in vmap.items()
+                if str(v['codsupervisor']) == str(codsupervisor)
+                and (scope is None or cu in scope)]
+    if not alvos_cu:
+        # fora do escopo do usuário (ou time inexistente) → 403 p/ usuário restrito
+        return None if scope is not None else {'ok': True, 'vendedores': []}
+
+    out = []
+    for cu in alvos_cu:
+        out.append({'codusur': int(cu), 'nome': vmap[cu]['nome'],
+                    **_bloco_metricas(real.get(cu, _ZERO_GRAO), prev.get(cu, _ZERO_GRAO), dm, dd, dr)})
+    out.sort(key=lambda x: -(x['venda']['realizado']))
+    return {'ok': True, 'codsupervisor': int(codsupervisor), 'vendedores': out}
+
+
+def metas_serie(ano=None, mes=None):
+    """Venda diária realizada no mês (dos eventos de produto) + acumulado, no escopo RBAC."""
+    ano, mes = _metas_ano_mes(ano, mes)
+    am = f"{ano:04d}-{mes:02d}"
+    am_prev = f"{ano - 1:04d}-{mes:02d}"
+    scope = _metas_scope_codusur()
+    dm, dd, dr = _dias_uteis(ano, mes, anchor())
+
+    por_dia = {}
+    for c in _dataset()['clientes']:
+        cu = str(c['codusur1'])
+        if scope is not None and cu not in scope:
+            continue
+        for cp, evs in c.get('produtos', {}).items():
+            for iso, venda, _qt in evs:
+                if iso[:7] == am:
+                    por_dia[iso[:10]] = por_dia.get(iso[:10], 0.0) + venda
+
+    # meta de venda = mesmo mês do ano anterior × crescimento (mesma régua do painel)
+    prev = _metas_realizado(am_prev, scope)
+    meta_venda = _agg_grao(prev, list(prev.keys()))['venda'] * (1 + _META_CRESC['venda'])
+    acum = 0.0
+    rows = []
+    for dia in sorted(por_dia):
+        acum += por_dia[dia]
+        rows.append({'dia': dia, 'venda': round(por_dia[dia], 2), 'acumulado': round(acum, 2)})
+    return {'ok': True, 'ano': ano, 'mes': mes, 'meta_venda': round(meta_venda, 2),
+            'dias': {'mes': dm, 'decorridos': dd, 'restantes': dr}, 'rows': rows}

@@ -4,7 +4,7 @@ App de demonstração para apresentar ao vivo a prospects. **Dados 100% fictíci
 **sem dependências externas** (sem Power BI, sem APIs, sem banco obrigatório).
 
 Dois módulos num app só:
-- **JOGA Comercial** (`/comercial`) — Dashboard, Carteira RFM, Vendedores, Cockpit, Categorias, Mix abandonado, Tendências/Cohort.
+- **JOGA Comercial** (`/comercial`) — Dashboard, Carteira RFM, Vendedores, Cockpit, Categorias, Mix abandonado, Tendências/Cohort, **Radar de Produtos**, **Metas** (4 métricas) e **Gerencial** (cobertura de carteira).
 - **JOGA Operações** (`/operacoes`) — DRE financeiro, Embarques, Mapa de rastreamento.
 
 ## Rodar localmente (Windows)
